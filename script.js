@@ -148,45 +148,77 @@ const app = {
         init() {
             const token = localStorage.getItem('mr_token');
             if (token) {
-                app.api('/users/profile')
-                    .then(user => {
-                        app.user = user;
-                        app.ui.showApp();
-                    })
-                    .catch(() => this.logout());
+                // Use raw fetch so we can silently clear a stale token
+                // without showing a confusing error toast to the user
+                const baseUrl = window.location.protocol === 'file:' ? 'http://localhost:5000/api' : '/api';
+                fetch(`${baseUrl}/users/profile`, {
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+                })
+                .then(r => r.ok ? r.json() : Promise.reject())
+                .then(user => { app.user = user; app.ui.showApp(); })
+                .catch(() => {
+                    // Token is stale or server restarted — clear silently
+                    localStorage.removeItem('mr_token');
+                    app.user = null;
+                    app.ui.showLogin();
+                });
                 return;
             }
             app.ui.showLogin();
         },
+
         async register(e) {
             e.preventDefault();
             const u = {
-                id: document.getElementById('regId').value,
-                name: document.getElementById('regName').value,
-                phone: document.getElementById('regPhone').value,
-                email: document.getElementById('regEmail').value || null,
+                id:       document.getElementById('regId').value.trim(),
+                name:     document.getElementById('regName').value.trim(),
+                phone:    document.getElementById('regPhone').value.trim(),
+                email:    document.getElementById('regEmail').value.trim() || null,
                 password: document.getElementById('regPassword').value
             };
-            
+
+            if (!u.id || !u.name || !u.phone || !u.password) {
+                app.ui.toast('Please fill in all required fields', 'error');
+                return;
+            }
+
             try {
-                const res = await app.api('/auth/register', 'POST', u);
-                app.ui.toast(res.msg, "success");
-                app.ui.showLogin();
-            } catch (err) {}
+                // Step 1: Register the account
+                await app.api('/auth/register', 'POST', u);
+
+                // Step 2: Automatically log in so the user doesn't have to
+                const loginRes = await app.api('/auth/login', 'POST', {
+                    loginId: u.phone,
+                    password: u.password
+                });
+                localStorage.setItem('mr_token', loginRes.token);
+                app.user = loginRes.user;
+                app.ui.toast('Account created! Welcome, ' + loginRes.user.name, 'success');
+                app.ui.showApp();
+            } catch (err) {
+                // Error toast is already shown by app.api() — nothing extra needed
+            }
         },
+
         async login(e) {
             e.preventDefault();
-            const loginId = document.getElementById('loginId').value;
+            const loginId  = document.getElementById('loginId').value.trim();
             const password = document.getElementById('loginPassword').value;
-            
+
+            if (!loginId || !password) {
+                app.ui.toast('Please enter your login ID and password', 'error');
+                return;
+            }
+
             try {
                 const res = await app.api('/auth/login', 'POST', { loginId, password });
                 localStorage.setItem('mr_token', res.token);
                 app.user = res.user;
-                app.ui.toast("Welcome back!", "success");
+                app.ui.toast('Welcome back, ' + res.user.name + '!', 'success');
                 app.ui.showApp();
             } catch (err) {}
         },
+
         logout() {
             localStorage.removeItem('mr_token');
             app.user = null;
