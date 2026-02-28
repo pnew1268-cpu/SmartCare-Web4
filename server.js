@@ -9,6 +9,28 @@ const app = express();
 const DEFAULT_PORT = 3000;
 const PORT = process.env.PORT || DEFAULT_PORT;
 
+// Ensure MySQL credentials are available to the DB layer before it is required
+// and also create a direct mysql connection for explicit verification.
+const mysql = require('mysql2');
+
+// Set env vars so ./db picks them up (keeps existing config behavior)
+process.env.DB_HOST = process.env.DB_HOST || 'localhost';
+process.env.DB_USER = process.env.DB_USER || 'medapp';
+process.env.MYSQL_PASSWORD = process.env.MYSQL_PASSWORD || 'M!nA@2026#S3cure';
+process.env.DB_NAME = process.env.DB_NAME || 'medical_system';
+
+// Direct MySQL connection for verification (as requested)
+const connection = mysql.createConnection({ host: "localhost", user: "medapp", password: "M!nA@2026#S3cure", database: "medical_system" });
+
+connection.connect(err => {
+    if (err) {
+        console.error('\n❌  MySQL connection failed:', err.message);
+        console.error('   Please ensure the MySQL service is running and credentials are correct.');
+        process.exit(1);
+    }
+    console.log('Connected to MySQL ✅');
+});
+
 const sequelize = require('./db');
 
 // ────────────────────────────────────────────────
@@ -132,9 +154,23 @@ const FamilyMember = require('./models/FamilyMember');
 User.hasMany(FamilyMember, { foreignKey: 'userId', onDelete: 'CASCADE' });
 FamilyMember.belongsTo(User, { foreignKey: 'userId' });
 
+// Authenticate DB connection first to provide clear messages for failures
 sequelize.authenticate()
-    .then(() => sequelize.sync({ alter: true })) // Force schema updates if columns are missing
-
+    .then(() => {
+        console.log('sequelize.authenticate() succeeded');
+        const dialect = sequelize.getDialect ? sequelize.getDialect() : 'unknown';
+        if (dialect === 'mysql') {
+            console.log('Connected to MySQL ✅');
+        } else {
+            console.log(`Connected to database (${dialect})`);
+        }
+        // Proceed to sync schema
+        return sequelize.sync({ alter: false });
+    })
+    .then(() => {
+        console.log('sequelize.sync() completed');
+        return Promise.resolve();
+    })
     .then(async () => {
         // Seed simple users for development if missing
         const seedAdmin = await User.findByPk('admin001');
@@ -147,23 +183,70 @@ sequelize.authenticate()
             await User.create({ id: '12345678901234', name: 'Test Patient', phone: '01012345678', email: 'patient@test.com', password: 'test123', roles: ['patient'], activeRole: 'patient' });
             console.log('[SEED] Created test patient: 12345678901234 / test123');
         }
+        // Seed a development test doctor account for quick login via temporary button
+        const existingTestDoc = await User.findOne({ where: { email: 'testdoctor@example.com' } });
+        if (!existingTestDoc) {
+            await User.create({
+                id: '30000000000001', // valid 14-digit starting with 3
+                name: 'Test Doctor',
+                phone: '01099999999',
+                email: 'testdoctor@example.com',
+                password: 'password123',
+                roles: ['doctor'],
+                activeRole: 'doctor',
+                specialization: 'Testing',
+                city: 'Cairo',
+                governorate: 'Cairo',
+                verificationStatus: 'approved'
+            });
+            console.log('[SEED] Created test doctor: ID=30000000000001 phone=01099999999 / password123');
+        }
 
         // start listening and keep a handle so we can catch errors
-        const server = app.listen(PORT, '0.0.0.0', () => {
-            console.log(`✅  Server running on http://localhost:${PORT}`);
-            console.log(`   Internal Address: http://0.0.0.0:${PORT}`);
-            console.log(`   Database: SQLite (${process.env.NODE_ENV || 'development'})`);
-        });
+        // Only start listening when this file is the main module (prevents double-listen when imported)
+        if (require.main === module) {
+            const server = app.listen(PORT, '0.0.0.0', () => {
+                console.log(`✅  Server running on http://localhost:${PORT}`);
+                console.log(`   Internal Address: http://0.0.0.0:${PORT}`);
+                try {
+                    console.log(`   Database: ${sequelize.getDialect ? sequelize.getDialect() : 'unknown'} (${process.env.NODE_ENV || 'development'})`);
+                } catch (e) {
+                    // ignore
+                }
+            });
 
-        server.on('error', err => {
-            if (err.code === 'EADDRINUSE') {
-                console.error(`❌  Port ${PORT} already in use. Is another instance running?`);
-                process.exit(1);
-            }
-            console.error('❌  Server error:', err);
-        });
+            server.on('error', err => {
+                if (err.code === 'EADDRINUSE') {
+                    console.error(`❌  Port ${PORT} already in use. Is another instance running?`);
+                    process.exit(1);
+                }
+                console.error('❌  Server error:', err);
+            });
+
+            // Graceful shutdown
+            process.on('SIGINT', () => {
+                console.log('\nShutting down server...');
+                server.close(() => {
+                    console.log('Server closed.');
+                    process.exit(0);
+                });
+            });
+        } else {
+            console.log('Server module imported, skipping app.listen()');
+        }
     })
     .catch(err => {
-        console.error('Failed to start server - DB error:', err);
+        // Provide a helpful, actionable error message for DB connection failures
+        console.error('\n❌  Database connection failed');
+        console.error('Error stack:', err.stack || err);
+        try {
+            const dialect = sequelize.getDialect ? sequelize.getDialect() : 'unknown';
+            console.error(`   Dialect: ${dialect}`);
+        } catch (e) {}
+        console.error('   Error details:', err.message || err);
+        console.error('   Host:', process.env.DB_HOST || 'localhost');
+        console.error('   User:', process.env.DB_USER || process.env.USER || 'medapp');
+        console.error('   Database:', process.env.DB_NAME || process.env.DB_DATABASE || 'medical_system');
+        console.error('\n   Please verify your MySQL server is running, credentials are correct, and mysql2 is installed.');
         process.exit(1);
     });

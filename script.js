@@ -1,11 +1,11 @@
 const app = {
     user: null,
     lang: 'en',
+    currentView: 'dashboard',  // Track current view for UI state
     currentChatPartner: null,
     currentPatient: null,
     currentFamilyMemberId: null, // For family member editing
-    // Forced Demo Mode for GitHub Pages and Static Deployment
-    isDemoMode: true, 
+
     
     // ════════════════════════════════════════════════════════════════
     // CLIENT-SIDE VALIDATION UTILITIES
@@ -118,22 +118,6 @@ const app = {
         }
     },
     
-    mockData: {
-        users: {
-            '12345678901234': { id: '12345678901234', name: 'Demo Patient', phone: '01012345678', email: 'patient@demo.com', roles: ['patient'], activeRole: 'patient', city: 'Cairo', governorate: 'Cairo' },
-            'admin001': { id: 'admin001', name: 'Demo Admin', phone: '0000000000', email: 'admin@demo.com', roles: ['admin'], activeRole: 'admin' },
-            'doctor001': { id: 'doctor001', name: 'Dr. Sarah Wilson', phone: '01212345678', email: 'sarah@demo.com', roles: ['doctor'], activeRole: 'doctor', specialization: 'Cardiology', clinicAddress: '123 Clinic St, Cairo', contactInfo: '01212345678' }
-        },
-        prescriptions: [
-            { id: 101, patientId: '12345678901234', doctorId: 'doctor001', medications: 'Aspirin 81mg', date: new Date().toISOString(), notes: 'Daily after breakfast' },
-            { id: 102, patientId: '12345678901234', doctorId: 'doctor001', medications: 'Vitamin D3', date: new Date(Date.now() - 86400000).toISOString(), notes: 'Once per week' }
-        ],
-        appointments: [],
-        messages: [],
-        notifications: [
-            { id: 1, userId: '12345678901234', title: 'Welcome', message: 'Welcome to MedRecord Demo!', read: false, createdAt: new Date().toISOString() }
-        ]
-    },
 
     translations: {
         en: {
@@ -240,14 +224,6 @@ const app = {
         const options = { method, headers };
         if (body && method !== 'GET') options.body = JSON.stringify(body);
 
-        if (app.isDemoMode) {
-            return new Promise((resolve, reject) => {
-                setTimeout(() => {
-                    try { resolve(app.mockApi(endpoint, method, body)); }
-                    catch (err) { reject(err); }
-                }, 400); // Simulate network lag
-            });
-        }
 
         try {
             const response = await fetch(targetUrl, options);
@@ -282,82 +258,8 @@ const app = {
         }
     },
 
-    mockApi: function(endpoint, method, body) {
-        console.log(`[DEMO-API] ${method} ${endpoint}`, body);
-        
-        // 1. AUTH
-        if (endpoint.includes('/login')) {
-            const user = this.mockData.users[body.loginId] || this.mockData.users['12345678901234'];
-            return { token: 'demo-token', user: { ...user } };
-        }
-        if (endpoint.includes('/register')) {
-            const newUser = { ...body, roles: ['patient'], activeRole: 'patient' };
-            this.mockData.users[body.id] = newUser;
-            return { msg: 'Demo registration successful', phone: body.phone };
-        }
-
-        // 2. USER PROFILE & SEARCH
-        if (endpoint.includes('/doctors')) {
-            return Object.values(this.mockData.users).filter(u => u.roles.includes('doctor'));
-        }
-        if (endpoint.includes('/pharmacies')) {
-            return [
-                { id: 1, name: 'Demo Pharmacy Alpha', address: '45 Nile St, Cairo', phone: '01000000001', city: 'Cairo' },
-                { id: 2, name: 'Demo Pharmacy Beta', address: '88 Horus Ave, Giza', phone: '01000000002', city: 'Giza' }
-            ];
-        }
-        if (endpoint.includes('/profile')) {
-            const userId = (endpoint.includes('?id=')) ? endpoint.split('id=')[1] : this.user.id;
-            const u = this.mockData.users[userId];
-            if (!u) return { msg: 'User not found' };
-            if (method === 'GET') return { ...u };
-            if (method === 'PUT') {
-                Object.assign(this.mockData.users[this.user.id], body);
-                return this.mockData.users[this.user.id];
-            }
-        }
-
-        // 3. CLINICAL
-        if (endpoint.includes('/clinical/prescriptions')) {
-            if (method === 'GET') return this.mockData.prescriptions.filter(r => r.patientId === (app.user.activeRole === 'patient' ? app.user.id : app.currentPatient?.id));
-            if (method === 'POST') {
-                const newRx = { id: Date.now(), ...body, date: new Date().toISOString(), doctorId: this.user.id };
-                this.mockData.prescriptions.unshift(newRx);
-                return newRx;
-            }
-        }
-        if (endpoint.includes('/clinical/appointments')) {
-            if (method === 'GET') return this.mockData.appointments;
-            if (method === 'POST') {
-                const newApt = { id: Date.now(), ...body, status: 'pending', createdAt: new Date().toISOString() };
-                this.mockData.appointments.unshift(newApt);
-                return newApt;
-            }
-        }
-
-        // 4. MESSAGES / NOTIFS
-        if (endpoint.includes('/notifications')) return this.mockData.notifications;
-        if (endpoint.includes('/messages')) {
-            if (method === 'GET') return this.mockData.messages;
-            if (method === 'POST') {
-                const newMsg = { id: Date.now(), ...body, senderId: this.user.id, createdAt: new Date().toISOString() };
-                this.mockData.messages.push(newMsg);
-                return newMsg;
-            }
-        }
-
-        return { msg: 'Endpoint mocked' };
-    },
 
     apiUpload: async (endpoint, formData) => {
-        if (app.isDemoMode) {
-            // Mock file upload by returning a placeholder or a data URL (simulated)
-            return new Promise((resolve) => {
-                setTimeout(() => {
-                    resolve({ url: 'https://via.placeholder.com/300?text=Uploaded+Document' });
-                }, 800);
-            });
-        }
         const token = localStorage.getItem('mr_token');
         const headers = {};
         if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -455,17 +357,17 @@ const app = {
         },
         updateDisplay() {
             const headerAvatar = document.getElementById('headerAvatar');
-            if (!headerAvatar) return;
+            if (!headerAvatar || !app.user) return;
             const pic = app.user.profilePic;
             if (pic) {
                 headerAvatar.innerHTML = `<img src="${pic}" alt="Profile">`;
             } else {
-                headerAvatar.textContent = app.user.name.charAt(0).toUpperCase();
+                headerAvatar.textContent = app.user.name ? app.user.name.charAt(0).toUpperCase() : '?';
             }
             const heros = ['heroAvatar', 'heroAvatarDoc'];
             heros.forEach(id => {
                 const el = document.getElementById(id);
-                if (el) el.innerHTML = pic ? `<img src="${pic}">` : (app.user.name ? app.user.name.charAt(0) : '');
+                if (el) el.innerHTML = pic ? `<img src="${pic}">` : (app.user && app.user.name ? app.user.name.charAt(0) : '');
             });
         },
         async saveGeneralSettings() {
@@ -517,37 +419,50 @@ const app = {
 
     auth: {
         init() {
-            // PUBLIC ACCESS MODE — no authentication required
-            // Set a default guest user so the app loads without login
-            if (!app.user) {
-                app.user = {
-                    id: 'guest_user',
-                    name: 'Welcome Guest',
-                    roles: ['patient'],
-                    activeRole: 'patient',
-                    phone: '01000000000',
-                    email: 'guest@medrecord.local',
-                    city: 'Cairo',
-                    governorate: 'Cairo'
-                };
-            }
+            // Check if user has a valid token
+            const token = localStorage.getItem('mr_token');
             
-            // Load app directly without login screen
-            app.ui.showApp();
+            if (token) {
+                // Token exists, try to load user profile
+                // For now, show app and let API handle token validation
+                // If token is invalid, logout will be triggered by 401 response
+                app.ui.showApp();
+            } else {
+                // No token, show login/register page
+                app.ui.showLogin();
+            }
+        },
+
+        toggleDoctorFields() {
+            const role = document.getElementById('regRole')?.value || '';
+            const doctorFields = document.getElementById('doctorFields');
+            const licenseInput = document.getElementById('regLicenseId');
+            const certificatesInput = document.getElementById('regCertificates');
+            
+            if (role === 'doctor') {
+                doctorFields?.classList.remove('hidden');
+                licenseInput?.setAttribute('required', 'required');
+                certificatesInput?.setAttribute('required', 'required');
+            } else {
+                doctorFields?.classList.add('hidden');
+                licenseInput?.removeAttribute('required');
+                certificatesInput?.removeAttribute('required');
+            }
         },
 
         async register(e) {
             e.preventDefault();
-            const id = document.getElementById('regId').value.trim();
-            const name = document.getElementById('regName').value.trim();
-            const phone = document.getElementById('regPhone').value.trim();
-            const email = document.getElementById('regEmail').value.trim();
-            const password = document.getElementById('regPassword').value;
-            const age = document.getElementById('regAge').value;
-            const dob = document.getElementById('regDOB').value;
-            const gender = document.getElementById('regGender').value;
-            const city = document.getElementById('regCity').value.trim();
-            const gov = document.getElementById('regGov').value;
+            const id = document.getElementById('regId')?.value.trim() || '';
+            const name = document.getElementById('regName')?.value.trim() || '';
+            const phone = document.getElementById('regPhone')?.value.trim() || '';
+            const email = document.getElementById('regEmail')?.value.trim() || '';
+            const password = document.getElementById('regPassword')?.value || '';
+            const age = document.getElementById('regAge')?.value || '';
+            const dob = document.getElementById('regDOB')?.value || '';
+            const gender = document.getElementById('regGender')?.value || '';
+            const city = document.getElementById('regCity')?.value.trim() || '';
+            const gov = document.getElementById('regGov')?.value || '';
+            const role = document.getElementById('regRole')?.value || 'patient';
 
             // ════════════════════════════════════════════════════════════════
             // FRONTEND VALIDATION
@@ -636,27 +551,137 @@ const app = {
             }
 
             // ════════════════════════════════════════════════════════════════
-            // SEND TO BACKEND (BACKEND WILL VALIDATE AGAIN)
+            // DOCTOR-SPECIFIC VALIDATION
             // ════════════════════════════════════════════════════════════════
 
-            try {
-                const body = {
-                    id: idVal.value,
-                    name: nameVal.value,
-                    phone: phoneVal.value,
-                    email: email || null,
-                    password,
-                    age: selectedAge,
-                    dateOfBirth: selectedDOB,
-                    gender: gender || null,
-                    city: city,
-                    governorate: govVal.value
-                };
-                await app.api('/register', 'POST', body);
-                app.ui.toast("Registered! Please login", "success");
-                app.ui.showLogin();
-            } catch (err) {
-                app.ui.toast(err.message || "Registration failed", "error");
+            if (role === 'doctor') {
+                const specialization = document.getElementById('regSpecialization')?.value.trim() || '';
+                const licenseFile = document.getElementById('regLicenseId')?.files?.[0];
+                const certificateFiles = document.getElementById('regCertificates')?.files;
+
+                if (!specialization) {
+                    app.ui.toast('Specialization is required for doctors', 'error');
+                    return;
+                }
+
+                if (!licenseFile) {
+                    app.ui.toast('Medical license ID is required', 'error');
+                    return;
+                }
+
+                if (!certificateFiles || certificateFiles.length === 0) {
+                    app.ui.toast('At least one medical certificate is required', 'error');
+                    return;
+                }
+
+                // Validate file sizes and types
+                const maxSize = 5 * 1024 * 1024; // 5MB
+                const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
+
+                if (licenseFile.size > maxSize) {
+                    app.ui.toast('License file size must be less than 5MB', 'error');
+                    return;
+                }
+
+                if (!allowedTypes.includes(licenseFile.type)) {
+                    app.ui.toast('License file must be PDF or image (JPG/PNG)', 'error');
+                    return;
+                }
+
+                for (let cert of certificateFiles) {
+                    if (cert.size > maxSize) {
+                        app.ui.toast(`Certificate "${cert.name}" exceeds 5MB limit`, 'error');
+                        return;
+                    }
+                    if (!allowedTypes.includes(cert.type)) {
+                        app.ui.toast(`Certificate "${cert.name}" must be PDF or image`, 'error');
+                        return;
+                    }
+                }
+
+                // Use FormData for doctor registration (multipart file upload)
+                try {
+                    const formData = new FormData();
+                    formData.append('id', idVal.value);
+                    formData.append('name', nameVal.value);
+                    formData.append('phone', phoneVal.value);
+                    formData.append('email', email || '');
+                    formData.append('password', password);
+                    formData.append('age', selectedAge);
+                    formData.append('dateOfBirth', selectedDOB || '');
+                    formData.append('gender', gender || '');
+                    formData.append('city', city);
+                    formData.append('governorate', govVal.value);
+                    formData.append('specialization', specialization);
+                    formData.append('licenseId', licenseFile);
+                    
+                    // Append all certificate files
+                    for (let cert of certificateFiles) {
+                        formData.append('certificates', cert);
+                    }
+
+                    const res = await fetch('/api/auth/register-doctor', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (!res.ok) {
+                        const errData = await res.json();
+                        throw new Error(errData.msg || 'Doctor registration failed');
+                    }
+
+                    const data = await res.json();
+                    if (data.verificationStatus === 'approved') {
+                        app.ui.toast("✓ Doctor account created and automatically approved. You may login now.", "success");
+                    } else {
+                        app.ui.toast("✓ Doctor account created! Your account is pending admin verification.", "success");
+                    }
+                    document.getElementById('registerForm')?.reset();
+                    app.auth.toggleDoctorFields();
+                    
+                    setTimeout(() => {
+                        app.ui.showLogin();
+                        const loginIdField = document.getElementById('loginId');
+                        if (loginIdField) {
+                            loginIdField.value = phone;
+                            loginIdField.focus();
+                        }
+                    }, 1500);
+                } catch (err) {
+                    app.ui.toast(err.message || 'Doctor registration failed', 'error');
+                }
+            } else {
+                // ════════════════════════════════════════════════════════════════
+                // PATIENT REGISTRATION
+                // ════════════════════════════════════════════════════════════════
+                try {
+                    const body = {
+                        id: idVal.value,
+                        name: nameVal.value,
+                        phone: phoneVal.value,
+                        email: email || null,
+                        password,
+                        age: selectedAge,
+                        dateOfBirth: selectedDOB,
+                        gender: gender || null,
+                        city: city,
+                        governorate: govVal.value
+                    };
+                    const res = await app.api('/register', 'POST', body);
+                    app.ui.toast("✓ Registration successful! Please login with your credentials.", "success");
+                    document.getElementById('registerForm')?.reset();
+                    
+                    setTimeout(() => {
+                        app.ui.showLogin();
+                        const loginIdField = document.getElementById('loginId');
+                        if (loginIdField) {
+                            loginIdField.value = phone;
+                            loginIdField.focus();
+                        }
+                    }, 1000);
+                } catch (err) {
+                    app.ui.toast(err.message || "Registration failed", "error");
+                }
             }
         },
 
@@ -672,39 +697,65 @@ const app = {
 
             try {
                 const res = await app.api('/login', 'POST', { loginId, password });
-                localStorage.setItem('mr_token', res.token);
-                app.user = res.user;
-                app.ui.toast('Welcome back, ' + res.user.name + '!', 'success');
-                app.ui.showApp();
+                if (res && res.token && res.user) {
+                    localStorage.setItem('mr_token', res.token);
+                    app.user = res.user;
+                    
+                    // Fetch full user profile to get verification status
+                    try {
+                        const fullProfile = await app.api('/users/profile', 'GET');
+                        app.user = { ...app.user, ...fullProfile };
+                    } catch (e) {
+                        // If profile fetch fails, continue with basic user data
+                        console.warn('Could not fetch full profile');
+                    }
+                    
+                    app.ui.toast('Welcome back, ' + (res.user.name || 'User') + '!', 'success');
+                    app.ui.showApp();
+                } else {
+                    app.ui.toast('Login failed: invalid response', 'error');
+                }
             } catch (err) {}
         },
+
+        // TEMPORARY DEVELOPMENT TEST BUTTON – REMOVE BEFORE PRODUCTION
+        // This helper just calls the normal login API using hard‑coded test doctor
+        // credentials; it does **not** bypass authentication or alter core logic.
+        // NOTE: the login endpoint accepts national ID or phone only, so we use the
+        // seeded doctor's ID here rather than an email address.
+        async loginTestDoctor() {
+            // credentials correspond to a temporary test doctor account created by
+            // earlier development scripts. Using phone number because the login
+            // endpoint accepts phone or national ID only.
+            const creds = { loginId: '01010739431', password: 'password123' };
+            try {
+                const res = await app.api('/login', 'POST', creds);
+                if (res && res.token && res.user) {
+                    localStorage.setItem('mr_token', res.token);
+                    app.user = res.user;
+                    try {
+                        const fullProfile = await app.api('/users/profile', 'GET');
+                        app.user = { ...app.user, ...fullProfile };
+                    } catch (e) {
+                        console.warn('Could not fetch full profile');
+                    }
+                    app.ui.toast('Logged in as test doctor', 'success');
+                    app.ui.showApp();
+                } else {
+                    app.ui.toast('Test login failed: invalid response', 'error');
+                }
+            } catch (err) {
+                app.ui.toast(err.message || 'Test login error', 'error');
+            }
+        },
+
 
         logout() {
             localStorage.removeItem('mr_token');
             if (app.ui.notifInterval) clearInterval(app.ui.notifInterval);
-            
-            // Reset to guest user for public access
-            app.user = {
-                id: 'guest_user',
-                name: 'Welcome Guest',
-                roles: ['patient'],
-                activeRole: 'patient',
-                phone: '01000000000',
-                email: 'guest@medrecord.local',
-                city: 'Cairo',
-                governorate: 'Cairo'
-            };
-            
-            app.ui.showApp();
-            app.ui.toast('You have been logged out. Browsing as guest.', 'info');
-        },
-
-        // Allow users to switch to login mode from demo/public browsing
-        switchToLogin() {
-            if (app.ui.notifInterval) clearInterval(app.ui.notifInterval);
             app.user = null;
             app.ui.showLogin();
-        }
+        },
     },
 
     ui: {
@@ -758,7 +809,7 @@ const app = {
             document.getElementById('appContainer')?.classList.remove('hidden');
             
             const headerName = document.getElementById('headerName');
-            if (headerName) headerName.textContent = app.user.name;
+            if (headerName && app.user && app.user.name) headerName.textContent = app.user.name;
             app.profile.updateDisplay();
 
             const switcher = document.getElementById('roleSwitcher');
@@ -774,14 +825,23 @@ const app = {
             app.notifications.load();
             this.notifInterval = setInterval(() => app.notifications.load(), 30000);
 
-            // Initial view based on role
-            if (app.user.activeRole === 'patient') {
-                this.showView('dashboard');
-            } else if (app.user.activeRole === 'doctor') {
-                this.showView('dashboard');
-            } else if (app.user.activeRole === 'admin') {
-                this.showView('admin');
+            // Check doctor verification status
+            const userRoles = Array.isArray(app.user.roles) ? app.user.roles : [app.user.roles];
+            if (userRoles.includes('doctor') && app.user.verificationStatus === 'pending') {
+                // Show pending verification dashboard
+                this.showView('doctorPending');
+                app.ui.toast('⏳ Your doctor account is pending admin verification. Please check back later.', 'info');
+            } else {
+                // Initial view based on role
+                if (app.user.activeRole === 'patient') {
+                    this.showView('dashboard');
+                } else if (app.user.activeRole === 'doctor') {
+                    this.showView('dashboard');
+                } else if (app.user.activeRole === 'admin') {
+                    this.showView('admin');
+                }
             }
+            
             app.i18n.apply();
         },
 
@@ -805,6 +865,9 @@ const app = {
             if (!nav) return;
             let navHtml = '';
             
+            // Language switcher
+            navHtml += `<div style="padding: 10px; border-bottom: 1px solid rgba(0,0,0,0.1);"><button onclick="app.i18n.switchLang()" style="background: var(--surface); border: 1px solid var(--border); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: 500;"><i class="fa-solid fa-globe"></i> ${app.lang === 'en' ? 'عربي' : 'English'}</button></div>`;
+            
             if (app.user.activeRole === 'patient') {
                 navHtml += `<a href="#" class="nav-item ${active === 'dashboard' ? 'active' : ''}" onclick="app.ui.showView('dashboard')"><i class="fa-solid fa-house"></i> <span data-i18n="nav_dashboard">${app.translations[app.lang].nav_dashboard}</span></a>`;
                 navHtml += `<a href="#" class="nav-item ${active === 'pharmacy' ? 'active' : ''}" onclick="app.ui.showView('pharmacy')"><i class="fa-solid fa-capsules"></i> <span data-i18n="nav_pharmacy">Pharmacies</span></a>`;
@@ -825,12 +888,17 @@ const app = {
                 <a href="#" class="nav-item ${active === 'settings' ? 'active' : ''}" onclick="app.ui.showView('settings')">
                     <i class="fa-solid fa-cog"></i> <span data-i18n="nav_settings">Settings</span>
                 </a>
+                <hr style="margin: 10px 0; border: none; border-top: 1px solid rgba(0,0,0,0.1);">
+                <a href="#" class="nav-item" onclick="app.auth.logout(); event.preventDefault();" style="color: var(--danger);">
+                    <i class="fa-solid fa-sign-out-alt"></i> <span>Logout</span>
+                </a>
             `;
             nav.innerHTML = navHtml;
             app.i18n.apply();
         },
 
         showView(view) {
+            app.currentView = view;  // Track the current view
             document.querySelectorAll('.dashboard-content').forEach(c => c.classList.add('hidden'));
             const mainView = document.getElementById('mainView');
             const pharmacySearchSection = document.getElementById('pharmacySearchSection');
@@ -867,9 +935,50 @@ const app = {
                     app.ui.renderSettings();
                 } else if (view === 'admin') {
                     app.ui.renderAdminPanel();
+                } else if (view === 'doctorPending') {
+                    app.ui.renderDoctorPendingView();
                 }
             }
             this.updateNav(view);
+        },
+
+        renderDoctorPendingView() {
+            const mainView = document.getElementById('mainView');
+            if (!mainView) return;
+
+            const html = `
+                <div class="content-header">
+                    <h1 class="page-title">Account Verification Pending</h1>
+                </div>
+
+                <div class="dashboard-widgets" style="display: flex; justify-content: center; padding: 60px 20px;">
+                    <div class="card" style="max-width: 500px; text-align: center;">
+                        <div style="font-size: 80px; color: var(--warning); margin-bottom: 20px;">
+                            <i class="fa-solid fa-hourglass-clock"></i>
+                        </div>
+                        <h2 style="margin-bottom: 15px; color: var(--warning);">⏳ Account Under Review</h2>
+                        <p style="font-size: 16px; color: var(--text-muted); line-height: 1.6; margin-bottom: 30px;">
+                            Thank you for registering as a doctor. Your account and medical credentials are currently under review by our admin team.
+                        </p>
+                        <div style="background: rgba(245, 158, 11, 0.1); border-left: 4px solid var(--warning); padding: 20px; margin-bottom: 30px; text-align: left;">
+                            <p style="font-size: 14px; margin-bottom: 10px;"><strong>What's happening?</strong></p>
+                            <ul style="margin-left: 20px; font-size: 13px; color: var(--text-muted);">
+                                <li>Your medical license and certificates are being verified</li>
+                                <li>Your professional credentials are being validated</li>
+                                <li>Once approved, you'll gain access to full doctor features</li>
+                            </ul>
+                        </div>
+                        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 30px;">
+                            We typically complete verification within 24-48 hours. You'll receive an email notification once your account is approved.
+                        </p>
+                        <button class="btn secondary-btn" onclick="window.location.href='/'" style="width: 100%;">
+                            <i class="fa-solid fa-arrow-right"></i> Return Home
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            mainView.innerHTML = html;
         },
 
         async renderPatientDashboard() {
@@ -919,7 +1028,8 @@ const app = {
 
         renderProfile() {
             const p = app.user;
-            const isDoc = p.roles.includes('doctor');
+            if (!p) return;
+            const isDoc = p && p.roles && p.roles.includes('doctor');
             const html = `
                 <div class="content-header">
                     <h1 class="page-title" data-i18n="my_profile">My Profile</h1>
@@ -927,7 +1037,7 @@ const app = {
 
                 <div class="profile-hero card stagger-1 mb-4" style="display:flex; align-items:center; gap :30px; padding:30px;">
                     <div class="avatar-container" style="width:120px; height:120px;" onclick="app.profile.triggerUpload()">
-                        <div class="avatar large" id="heroAvatar">${p.profilePic ? `<img src="${p.profilePic}">` : p.name.charAt(0)}</div>
+                        <div class="avatar large" id="heroAvatar">${p.profilePic ? `<img src="${p.profilePic}">` : (p && p.name ? p.name.charAt(0) : '?')}</div>
                         <div class="avatar-overlay" style="font-size:24px;"><i class="fa-solid fa-camera"></i></div>
                     </div>
                     <div>
@@ -991,6 +1101,10 @@ const app = {
                         </div>
                         <button class="btn secondary-btn full-width mb-3" onclick="app.profile.uploadProfessionalDocs()">Sync Files</button>
                         <button class="btn primary-btn full-width" onclick="app.profile.saveDocSettings()">Update Pro Info</button>
+                        <!-- TEMPORARY DEVELOPMENT TEST BUTTON – REMOVE BEFORE PRODUCTION -->
+                        <button class="btn danger-btn full-width mt-2" onclick="app.auth.loginTestDoctor()">
+                            Login as Test Doctor (Development Only)
+                        </button>
                     </div>
                     ` : `
                     <div class="card stagger-3">
@@ -1482,7 +1596,7 @@ const app = {
                 doc.setFontSize(22);
                 doc.text("MedRecord Prescription", 20, 20);
                 doc.setFontSize(12);
-                doc.text(`Patient: ${app.user.name}`, 20, 40);
+                doc.text(`Patient: ${app.user && app.user.name ? app.user.name : 'Unknown'} `, 20, 40);
                 doc.text(`Doctor: ${rx.doctorId?.name || 'System'}`, 20, 50);
                 doc.text(`Date: ${new Date(rx.date).toLocaleDateString()}`, 20, 60);
                 doc.line(20, 65, 190, 65);
@@ -1500,6 +1614,36 @@ const app = {
                 doc.save(`Prescription_${rxId}.pdf`);
             } catch (err) {
                 app.ui.toast("PDF Export failed", "error");
+            }
+        },
+        async loadPrescriptions() {
+            try {
+                const prescriptions = await app.api('/clinical/prescriptions');
+                const container = document.getElementById('patientPrescriptionsList');
+                if (!container) return;
+                if (prescriptions.length === 0) {
+                    container.innerHTML = '<p class="text-muted">No medical records found</p>';
+                    return;
+                }
+                container.innerHTML = prescriptions.reverse().map(rx => `
+                    <div class="card prescription-card mb-3">
+                        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                            <strong>${rx.medications || 'No medications'}</strong>
+                            <small>${new Date(rx.date).toLocaleDateString()}</small>
+                        </div>
+                        <div class="card-body">
+                            <p>${rx.notes || 'No notes'}</p>
+                            ${rx.fileUrl ? `<a href="${rx.fileUrl}" target="_blank" class="link">View Attachment</a>` : ''}
+                        </div>
+                        <div class="card-footer">
+                            <button onclick="app.patient.exportToPDF('${rx.id}')" class="btn primary-btn btn-sm">
+                                <i class="fa-solid fa-download"></i> Export
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (err) {
+                app.ui.toast('Failed to load prescriptions', 'error');
             }
         }
     },
@@ -1583,20 +1727,90 @@ const app = {
         }
     },
 
+    pharmacy: {
+        async renderSearch() {
+            const container = document.getElementById('pharmacySearchSection');
+            if (!container) return;
+            
+            try {
+                const pharmacies = await app.api('/pharmacies', 'GET');
+                let html = `
+                    <div class="search-box" style="padding: 20px;">
+                        <h3>${app.translations[app.lang].nav_pharmacy || 'Pharmacies'}</h3>
+                        <input type="text" id="pharmacySearch" placeholder="${app.translations[app.lang].search_pharmacy_placeholder || 'Search pharmacies...'}" style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid var(--border); border-radius: 6px;">
+                        <button onclick="app.pharmacy.searchPharmacies()" class="btn primary-btn" style="width: 100%;">
+                            <i class="fa-solid fa-search"></i> ${app.translations[app.lang].search_btn || 'Search'}
+                        </button>
+                    </div>
+                    <div id="pharmacyList" style="padding: 20px;"></div>
+                `;
+                container.innerHTML = html;
+                this.displayPharmacies(pharmacies);
+            } catch (err) {
+                const container = document.getElementById('pharmacySearchSection');
+                if (container) {
+                    container.innerHTML = `<p class="error">Failed to load pharmacies</p>`;
+                }
+            }
+        },
+        async searchPharmacies() {
+            const query = document.getElementById('pharmacySearch')?.value || '';
+            try {
+                const pharmacies = await app.api('/pharmacies', 'GET');
+                const filtered = pharmacies.filter(p => 
+                    p.name.toLowerCase().includes(query.toLowerCase()) ||
+                    p.address.toLowerCase().includes(query.toLowerCase()) ||
+                    p.city.toLowerCase().includes(query.toLowerCase())
+                );
+                this.displayPharmacies(filtered);
+            } catch (err) {
+                app.ui.toast('Search failed', 'error');
+            }
+        },
+        displayPharmacies(pharmacies) {
+            const list = document.getElementById('pharmacyList');
+            if (!list) return;
+            
+            if (pharmacies.length === 0) {
+                list.innerHTML = `<p class="text-muted">${app.translations[app.lang].no_pharmacies || 'No pharmacies found'}</p>`;
+                return;
+            }
+            
+            list.innerHTML = pharmacies.map(p => `
+                <div class="card mb-2" style="padding: 15px;">
+                    <h4>${p.name}</h4>
+                    <p><i class="fa-solid fa-map-marker-alt"></i> ${p.address}</p>
+                    <p><i class="fa-solid fa-phone"></i> <a href="tel:${p.phone}">${p.phone}</a></p>
+                    <p><i class="fa-solid fa-city"></i> ${p.city}</p>
+                    <button onclick="window.open('https://maps.google.com/maps/search/${encodeURIComponent(p.name + ' ' + p.address)}')" class="btn secondary-btn" style="width: 100%;">
+                        <i class="fa-solid fa-directions"></i> Get Directions
+                    </button>
+                </div>
+            `).join('');
+        }
+    },
+
     i18n: {
         init() {
             const saved = localStorage.getItem('mr_lang');
             if (saved) app.lang = saved;
             this.apply();
         },
-        toggle() {
+        switchLang() {
             app.lang = app.lang === 'en' ? 'ar' : 'en';
             localStorage.setItem('mr_lang', app.lang);
             this.apply();
-            location.reload(); // Simplest way to re-render everything
+            // Re-render current view without full reload
+            if (app.user) {
+                app.ui.updateNav(app.currentView || 'dashboard');
+            }
+        },
+        toggle() {
+            this.switchLang();
         },
         apply() {
             document.documentElement.setAttribute('dir', app.lang === 'ar' ? 'rtl' : 'ltr');
+            document.documentElement.setAttribute('lang', app.lang);
             document.querySelectorAll('[data-i18n]').forEach(el => {
                 const key = el.getAttribute('data-i18n');
                 if (app.translations[app.lang][key]) el.textContent = app.translations[app.lang][key];

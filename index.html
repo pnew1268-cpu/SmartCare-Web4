@@ -20,6 +20,14 @@
                 <span style="font-weight: 800;">MedRecord</span>
             </div>
             
+            <!-- Language Switcher -->
+            <div style="text-align: center; margin-bottom: 20px;">
+                <button type="button" onclick="app.i18n.switchLang(); event.preventDefault();" class="btn secondary-btn" style="font-size: 12px; padding: 6px 12px;">
+                    <i class="fa-solid fa-globe"></i>
+                    <span id="langSwitcher">العربية</span>
+                </button>
+            </div>
+            
             <form id="loginForm" class="auth-form" onsubmit="app.auth.login(event)">
                 <h2 data-i18n="login_title">Welcome Back</h2>
                 <div class="form-group">
@@ -39,6 +47,17 @@
 
             <form id="registerForm" class="auth-form hidden" onsubmit="app.auth.register(event)">
                 <h2 data-i18n="register_title">Create Account</h2>
+                
+                <!-- ROLE SELECTION -->
+                <div class="form-group">
+                    <label>Account Type *</label>
+                    <select id="regRole" class="form-select" required onchange="app.auth.toggleDoctorFields()">
+                        <option value="">Select Type...</option>
+                        <option value="patient">Patient</option>
+                        <option value="doctor">Doctor</option>
+                    </select>
+                </div>
+
                 <div class="form-group">
                     <label data-i18n="national_id">National ID</label>
                     <input type="text" id="regId" required placeholder="2XXXXXXXXXXXXX">
@@ -62,6 +81,25 @@
                     <input type="password" id="regPassword" required placeholder="••••••••" minlength="8">
                     <small style="font-size: 10px; color: var(--text-muted);">Min 8 characters, letters & numbers</small>
                 </div>
+
+                <!-- DOCTOR-ONLY FIELDS -->
+                <div id="doctorFields" class="doctor-fields hidden">
+                    <div class="form-group">
+                        <label>Medical Specialization *</label>
+                        <input type="text" id="regSpecialization" placeholder="e.g., Cardiology, Neurology">
+                    </div>
+                    <div class="form-group">
+                        <label>Medical License ID (PDF/Image) *</label>
+                        <input type="file" id="regLicenseId" accept=".pdf,.jpg,.jpeg,.png" required>
+                        <small style="color: var(--text-muted);">PDF or image (max 5MB)</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Medical Certificates (PDF/Images) * (Upload at least one)</label>
+                        <input type="file" id="regCertificates" accept=".pdf,.jpg,.jpeg,.png" multiple required>
+                        <small style="color: var(--text-muted);">You can upload multiple files (max 5MB each)</small>
+                    </div>
+                </div>
+
                 <div class="form-row">
                     <div class="form-group half">
                         <label>Age</label>
@@ -203,12 +241,6 @@
                 </div>
             </header>
 
-            <!-- Public Access / Demo Mode Banner -->
-            <div id="demoBanner" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 20px; text-align: center; font-size: 14px; font-weight: 500;">
-                <i class="fa-solid fa-info-circle" style="margin-right: 8px;"></i>
-                <span>You are browsing in public/demo mode.</span>
-                <a href="#" onclick="app.auth.switchToLogin()" style="color: white; text-decoration: underline; font-weight: 600; margin-left: 8px;">Click here to login</a>
-            </div>
 
             <div class="dashboard-content" id="mainView">
                 <!-- Content injected here -->
