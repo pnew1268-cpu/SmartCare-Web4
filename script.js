@@ -2,7 +2,138 @@ const app = {
     user: null,
     lang: 'en',
     currentChatPartner: null,
-    currentPatient: null, // Only used by doctor
+    currentPatient: null,
+    currentFamilyMemberId: null, // For family member editing
+    // Forced Demo Mode for GitHub Pages and Static Deployment
+    isDemoMode: true, 
+    
+    // ════════════════════════════════════════════════════════════════
+    // CLIENT-SIDE VALIDATION UTILITIES
+    // ════════════════════════════════════════════════════════════════
+    validators: {
+        nationalId(value) {
+            if (!value) return { valid: false, message: 'National ID is required' };
+            const cleaned = String(value).trim().replace(/\s/g, '');
+            if (!/^\d{14}$/.test(cleaned)) {
+                return { valid: false, message: 'National ID must be exactly 14 numeric digits' };
+            }
+            if (!/^[23]\d{13}$/.test(cleaned)) {
+                return { valid: false, message: 'National ID must start with 2 or 3' };
+            }
+            return { valid: true, value: cleaned };
+        },
+
+        phoneNumber(value) {
+            if (!value) return { valid: false, message: 'Phone number is required' };
+            const cleaned = String(value).trim().replace(/\s/g, '');
+            if (!/^01[0125]\d{8}$/.test(cleaned)) {
+                return { valid: false, message: 'Phone must be 11 digits (e.g., 01012345678)' };
+            }
+            return { valid: true, value: cleaned };
+        },
+
+        email(value) {
+            if (!value) return { valid: false, message: 'Email is required' };
+            const trimmed = String(value).trim();
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+                return { valid: false, message: 'Invalid email format' };
+            }
+            return { valid: true, value: trimmed };
+        },
+
+        name(value, fieldName = 'Name') {
+            if (!value) return { valid: false, message: `${fieldName} is required` };
+            const trimmed = String(value).trim();
+            const cleaned = trimmed.replace(/\s+/g, ' ');
+            if (cleaned.length < 2 || cleaned.length > 100) {
+                return { valid: false, message: `${fieldName} must be 2-100 characters` };
+            }
+            if (!/^[a-zA-Z\s\-']{2,100}$/i.test(cleaned)) {
+                return { valid: false, message: `${fieldName} must contain only letters, spaces, hyphens, and apostrophes` };
+            }
+            return { valid: true, value: cleaned };
+        },
+
+        password(value) {
+            if (!value) return { valid: false, message: 'Password is required' };
+            if (value.length < 8) {
+                return { valid: false, message: 'Password must be at least 8 characters' };
+            }
+            if (!/[a-zA-Z]/.test(value)) {
+                return { valid: false, message: 'Password must contain at least one letter' };
+            }
+            if (!/\d/.test(value)) {
+                return { valid: false, message: 'Password must contain at least one number' };
+            }
+            return { valid: true };
+        },
+
+        age(value) {
+            if (value === '' || value === null || value === undefined) {
+                return { valid: false, message: 'Age is required' };
+            }
+            const age = parseInt(value);
+            if (isNaN(age) || age < 1 || age > 150) {
+                return { valid: false, message: 'Age must be between 1 and 150' };
+            }
+            return { valid: true, value: age };
+        },
+
+        dateOfBirth(value) {
+            if (!value) return { valid: false, message: 'Date of birth is required' };
+            const date = new Date(value);
+            if (isNaN(date.getTime())) {
+                return { valid: false, message: 'Invalid date format' };
+            }
+            if (date > new Date()) {
+                return { valid: false, message: 'Date must be in the past' };
+            }
+            const maxDate = new Date();
+            maxDate.setFullYear(maxDate.getFullYear() - 150);
+            if (date < maxDate) {
+                return { valid: false, message: 'Invalid date of birth' };
+            }
+            return { valid: true, value: date.toISOString().split('T')[0] };
+        },
+
+        gender(value) {
+            const validGenders = ['', 'male', 'female', 'other'];
+            if (!validGenders.includes(String(value).toLowerCase())) {
+                return { valid: false, message: 'Invalid gender selection' };
+            }
+            return { valid: true, value: String(value).toLowerCase() };
+        },
+
+        governorate(value) {
+            const validGovs = [
+                "Cairo", "Giza", "Alexandria", "Dakahlia", "Red Sea", "Beheira", "Fayoum",
+                "Gharbia", "Ismailia", "Menofia", "Minya", "Qalyubia", "New Valley", "Suez",
+                "Aswan", "Assiut", "Beni Suef", "Port Said", "Damietta", "Sharkia", "South Sinai",
+                "Kafr El Sheikh", "Matrouh", "Luxor", "Qena", "North Sinai", "Sohag"
+            ];
+            if (!validGovs.includes(value)) {
+                return { valid: false, message: 'Invalid governorate' };
+            }
+            return { valid: true, value };
+        }
+    },
+    
+    mockData: {
+        users: {
+            '12345678901234': { id: '12345678901234', name: 'Demo Patient', phone: '01012345678', email: 'patient@demo.com', roles: ['patient'], activeRole: 'patient', city: 'Cairo', governorate: 'Cairo' },
+            'admin001': { id: 'admin001', name: 'Demo Admin', phone: '0000000000', email: 'admin@demo.com', roles: ['admin'], activeRole: 'admin' },
+            'doctor001': { id: 'doctor001', name: 'Dr. Sarah Wilson', phone: '01212345678', email: 'sarah@demo.com', roles: ['doctor'], activeRole: 'doctor', specialization: 'Cardiology', clinicAddress: '123 Clinic St, Cairo', contactInfo: '01212345678' }
+        },
+        prescriptions: [
+            { id: 101, patientId: '12345678901234', doctorId: 'doctor001', medications: 'Aspirin 81mg', date: new Date().toISOString(), notes: 'Daily after breakfast' },
+            { id: 102, patientId: '12345678901234', doctorId: 'doctor001', medications: 'Vitamin D3', date: new Date(Date.now() - 86400000).toISOString(), notes: 'Once per week' }
+        ],
+        appointments: [],
+        messages: [],
+        notifications: [
+            { id: 1, userId: '12345678901234', title: 'Welcome', message: 'Welcome to MedRecord Demo!', read: false, createdAt: new Date().toISOString() }
+        ]
+    },
 
     translations: {
         en: {
@@ -32,7 +163,10 @@ const app = {
             verify_title: "Verify Your Account", verify_desc: "A 4-digit code was sent to your phone/email. Enter it below:",
             verify_btn: "Verify", verify_error: "Invalid code. Please try again.", verify_success: "Account verified successfully!",
             nav_appointments: "Appointments", book_apt: "Book Appointment", date_label: "Select Date", time_label: "Select Time",
-            no_apt: "No appointments scheduled.", my_appointments: "My Appointments"
+            no_apt: "No appointments scheduled.", my_appointments: "My Appointments",
+            notifications: "Notifications", no_notifs: "No new notifications",
+            capture_rx: "Capture Prescription", capture: "Capture", cancel: "Cancel",
+            search_patient_placeholder: "Enter Patient ID...", search_doc_placeholder: "Find a Doctor..."
         },
         ar: {
             lang_name: "English", login_title: "مرحباً بعودتك", national_id: "الرقم القومي",
@@ -43,16 +177,16 @@ const app = {
             phone: "رقم الهاتف", email: "البريد الإلكتروني", register_btn: "تسجيل",
             has_account: "لديك حساب بالفعل؟", login_link: "سجل الدخول هنا",
             nav_dashboard: "لوحة التحكم", my_profile: "ملفي الشخصي", nav_messages: "الرسائل",
-            nav_patients: "المرضى", search_btn: "بحث", search_patient_placeholder: "أدخل الرقم القومي للمريض...",
-            search_doc_placeholder: "أدخل اسم الدكتور...",
+            nav_patients: "المرضى", search_btn: "بحث", search_patient_placeholder: "الرقم القومي للمريض...",
+            search_doc_placeholder: "بحث عن طبيب...",
             select_doc_msg: "اختر طبيباً للمراسلة...",
             prescriptions_upload: "تحميل ملف طبي",
             personal_info: "المعلومات الشخصية", edit: "تعديل", save: "حفظ", cancel: "إلغاء",
             my_prescriptions: "الروشتات الطبية", doctor_welcome: "مرحباً بك، دكتور",
-            doctor_instruct: "استخدم شريط البحث أعلاه للعثور على مريض باستخدام الرقم القومي.",
+            doctor_instruct: "البحث عن مريض بالرقم القومي للبدء.",
             prescribe_new: "كتابة روشتة جديدة", medications: "الأدوية", notes: "ملاحظات الطبيب",
             send_prescription: "إرسال الروشتة", no_prescriptions: "لا توجد روشتات.",
-            prescribed_by: "وصفها د. ", patient_workspace: "ملف المريض الحالى",
+            prescribed_by: "وصفها د. ", patient_workspace: "ملف المريض الحالي",
             chat_title: "الرسائل", type_message: "اكتب رسالة...", send_msg: "إرسال",
             no_messages: "لا توجد رسائل. ابدأ المحادثة!", select_chat_partner: "اختر مريضاً لبدء المحادثة",
             back_to_search: "العودة للبحث",
@@ -60,39 +194,239 @@ const app = {
             reject: "رفض", apply_doctor: "التقديم كطبيب", license_label: "تحميل الرخصة (PDF/صورة)",
             switch_role: "التبديل إلى", status_pending: "قيد الانتظار", status_approved: "تمت الموافقة", status_rejected: "مرفوض",
             verify_title: "تأكيد حسابك", verify_desc: "تم إرسال كود من 4 أرقام لهاتفك/بريدك. أدخله أدناه:",
-            verify_btn: "تأكيد", verify_error: "الكود غير صحيح. حاول مرة أخرى.", verify_success: "تم تأكيد الحساب بنجاح!"
+            verify_btn: "تأكيد", verify_error: "الكود غير صحيح. حاول مرة أخرى.", verify_success: "تم تأكيد الحساب بنجاح!",
+            notifications: "التنبيهات", no_notifs: "لا توجد تنبيهات جديدة",
+            capture_rx: "التقاط صورة الروشتة", capture: "التقاط", nav_appointments: "المواعيد",
+            book_apt: "حجز موعد", date_label: "التاريخ", time_label: "الوقت",
+            nav_settings: "الإعدادات", nav_pharmacy: "الصيدليات",
+            city: "المدينة", governorate: "المحافظة",
+            search_pharmacy_placeholder: "البحث عن صيدليات...",
+            pharmacy_name: "اسم الصيدلية", pharmacy_address: "العنوان", pharmacy_phone: "الهاتف",
+            pharmacy_distance: "المسافة", no_pharmacies: "لا توجد صيدليات."
         }
     },
 
-    api: async (url, method = 'GET', body = null) => {
-        const headers = { 'Content-Type': 'application/json' };
+    // ─────────────────────────────────────────────────────────────
+    // REAL BACKEND API - Connects to Express Server
+    // ─────────────────────────────────────────────────────────────
+    geo: {
+        async getPosition() {
+            return new Promise((resolve, reject) => {
+                if (!navigator.geolocation) return reject("No geo");
+                navigator.geolocation.getCurrentPosition(resolve, reject);
+            });
+        }
+    },
+    
+    api: async (endpoint, method = 'GET', body = null) => {
         const token = localStorage.getItem('mr_token');
+        const headers = { 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = `Bearer ${token}`;
 
-        const options = { method, headers };
-        if (body) options.body = JSON.stringify(body);
-
-        const baseUrl = window.location.protocol === 'file:' ? 'http://localhost:5000/api' : '/api';
+        // Handle absolute vs relative URLs (for local file display support)
+        let baseUrl = '/api';
+        if (window.location.protocol === 'file:') {
+            baseUrl = 'http://127.0.0.1:3000/api';
+        } else if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            if (window.location.port !== '3000') baseUrl = `http://${window.location.hostname}:3000/api`;
+        } else if (window.location.port && window.location.port !== '3000') {
+            baseUrl = `${window.location.protocol}//${window.location.hostname}:3000/api`;
+        }
         
+        const targetUrl = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
+        
+        console.log(`[API] ${method} ${targetUrl}`, body);
+
+        const options = { method, headers };
+        if (body && method !== 'GET') options.body = JSON.stringify(body);
+
+        if (app.isDemoMode) {
+            return new Promise((resolve, reject) => {
+                setTimeout(() => {
+                    try { resolve(app.mockApi(endpoint, method, body)); }
+                    catch (err) { reject(err); }
+                }, 400); // Simulate network lag
+            });
+        }
+
         try {
-            const res = await fetch(`${baseUrl}${url}`, options);
+            const response = await fetch(targetUrl, options);
+            const contentType = response.headers.get("content-type");
             
-            // Check if response is JSON
-            const contentType = res.headers.get("content-type");
             let data;
             if (contentType && contentType.indexOf("application/json") !== -1) {
-                data = await res.json();
+                data = await response.json();
             } else {
-                const text = await res.text();
-                data = { msg: text || 'Server Error' };
+                const text = await response.text();
+                console.error('[API] Non-JSON Response received:', text.substring(0, 200));
+                throw new Error(`Server returned non-JSON response (${response.status}). Check backend status.`);
             }
-
-            if (!res.ok) throw new Error(data.msg || 'Something went wrong');
+            
+            if (!response.ok) {
+                if (response.status === 401) {
+                    localStorage.removeItem('mr_token');
+                    if (!endpoint.includes('/auth/login')) app.auth.logout();
+                }
+                const errorMsg = data.msg || data.message || data.error || 'API Request failed';
+                console.warn(`[API] Error ${response.status}:`, errorMsg);
+                throw new Error(errorMsg);
+            }
             return data;
         } catch (err) {
-            console.error(`API Error (${url}):`, err);
-            app.ui.toast(err.message, "error");
+            console.error('[API] Fetch Error:', err);
+            const msg = err.name === 'SyntaxError' ? 'Server returned invalid JSON. Check backend logs.' : (err.name === 'TypeError' && err.message === 'Failed to fetch' 
+                ? 'Could not connect to server. Ensure backend is running.' 
+                : err.message);
+            app.ui.toast(msg, 'error');
             throw err;
+        }
+    },
+
+    mockApi: function(endpoint, method, body) {
+        console.log(`[DEMO-API] ${method} ${endpoint}`, body);
+        
+        // 1. AUTH
+        if (endpoint.includes('/login')) {
+            const user = this.mockData.users[body.loginId] || this.mockData.users['12345678901234'];
+            return { token: 'demo-token', user: { ...user } };
+        }
+        if (endpoint.includes('/register')) {
+            const newUser = { ...body, roles: ['patient'], activeRole: 'patient' };
+            this.mockData.users[body.id] = newUser;
+            return { msg: 'Demo registration successful', phone: body.phone };
+        }
+
+        // 2. USER PROFILE & SEARCH
+        if (endpoint.includes('/doctors')) {
+            return Object.values(this.mockData.users).filter(u => u.roles.includes('doctor'));
+        }
+        if (endpoint.includes('/pharmacies')) {
+            return [
+                { id: 1, name: 'Demo Pharmacy Alpha', address: '45 Nile St, Cairo', phone: '01000000001', city: 'Cairo' },
+                { id: 2, name: 'Demo Pharmacy Beta', address: '88 Horus Ave, Giza', phone: '01000000002', city: 'Giza' }
+            ];
+        }
+        if (endpoint.includes('/profile')) {
+            const userId = (endpoint.includes('?id=')) ? endpoint.split('id=')[1] : this.user.id;
+            const u = this.mockData.users[userId];
+            if (!u) return { msg: 'User not found' };
+            if (method === 'GET') return { ...u };
+            if (method === 'PUT') {
+                Object.assign(this.mockData.users[this.user.id], body);
+                return this.mockData.users[this.user.id];
+            }
+        }
+
+        // 3. CLINICAL
+        if (endpoint.includes('/clinical/prescriptions')) {
+            if (method === 'GET') return this.mockData.prescriptions.filter(r => r.patientId === (app.user.activeRole === 'patient' ? app.user.id : app.currentPatient?.id));
+            if (method === 'POST') {
+                const newRx = { id: Date.now(), ...body, date: new Date().toISOString(), doctorId: this.user.id };
+                this.mockData.prescriptions.unshift(newRx);
+                return newRx;
+            }
+        }
+        if (endpoint.includes('/clinical/appointments')) {
+            if (method === 'GET') return this.mockData.appointments;
+            if (method === 'POST') {
+                const newApt = { id: Date.now(), ...body, status: 'pending', createdAt: new Date().toISOString() };
+                this.mockData.appointments.unshift(newApt);
+                return newApt;
+            }
+        }
+
+        // 4. MESSAGES / NOTIFS
+        if (endpoint.includes('/notifications')) return this.mockData.notifications;
+        if (endpoint.includes('/messages')) {
+            if (method === 'GET') return this.mockData.messages;
+            if (method === 'POST') {
+                const newMsg = { id: Date.now(), ...body, senderId: this.user.id, createdAt: new Date().toISOString() };
+                this.mockData.messages.push(newMsg);
+                return newMsg;
+            }
+        }
+
+        return { msg: 'Endpoint mocked' };
+    },
+
+    apiUpload: async (endpoint, formData) => {
+        if (app.isDemoMode) {
+            // Mock file upload by returning a placeholder or a data URL (simulated)
+            return new Promise((resolve) => {
+                setTimeout(() => {
+                    resolve({ url: 'https://via.placeholder.com/300?text=Uploaded+Document' });
+                }, 800);
+            });
+        }
+        const token = localStorage.getItem('mr_token');
+        const headers = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        let baseUrl = '/api';
+        if (window.location.protocol === 'file:') baseUrl = 'http://127.0.0.1:3000/api';
+        else if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            if (window.location.port !== '3000') baseUrl = `http://${window.location.hostname}:3000/api`;
+        } else if (window.location.port && window.location.port !== '3000') {
+            baseUrl = `${window.location.protocol}//${window.location.hostname}:3000/api`;
+        }
+        
+        const targetUrl = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
+
+        try {
+            const res = await fetch(targetUrl, { method: 'POST', headers, body: formData });
+            const contentType = res.headers.get("content-type");
+            if (!contentType || contentType.indexOf("application/json") === -1) {
+                const text = await res.text();
+                throw new Error(`Upload failed (${res.status}). Server returned non-JSON.`);
+            }
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.msg || data.message || 'Upload failed');
+            return data;
+        } catch (err) {
+            app.ui.toast(err.message, 'error');
+            throw err;
+        }
+    },
+
+    notifications: {
+        list: [],
+        async load() {
+            try {
+                const data = await app.api('/notifications');
+                this.list = data;
+                this.updateUI();
+            } catch (err) {}
+        },
+        updateUI() {
+            const badge = document.getElementById('notifBadge');
+            const listContainer = document.getElementById('notifList');
+            if (!badge || !listContainer) return;
+
+            const unread = this.list.filter(n => !n.isRead).length;
+            if (unread > 0) {
+                badge.textContent = unread;
+                badge.classList.remove('hidden');
+            } else {
+                badge.classList.add('hidden');
+            }
+
+            if (this.list.length === 0) {
+                listContainer.innerHTML = `<p style="text-align:center; padding:20px; font-size:12px; color:var(--text-muted);" data-i18n="no_notifs">${app.translations[app.lang].no_notifs}</p>`;
+                return;
+            }
+
+            listContainer.innerHTML = this.list.map(n => `
+                <div class="notif-item ${n.isRead ? '' : 'unread'}" onclick="app.notifications.markRead('${n.id || n._id}')">
+                    <div style="font-size:12px; font-weight:600;">${n.message}</div>
+                    <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">${new Date(n.createdAt || n.date).toLocaleString()}</div>
+                </div>
+            `).join('');
+        },
+        async markRead(id) {
+            try {
+                await app.api(`/notifications/${id}/read`, 'PUT');
+                this.load();
+            } catch (err) {}
         }
     },
 
@@ -112,20 +446,12 @@ const app = {
             formData.append('file', file);
 
             try {
-                const res = await fetch('/api/users/upload', {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${localStorage.getItem('mr_token')}` },
-                    body: formData
-                });
-                const { url } = await res.json();
-                
-                await app.api('/users/profile', 'PUT', { profilePic: url });
-                app.user.profilePic = url;
+                const data = await app.apiUpload('/users/upload', formData);
+                await app.api('/users/profile', 'PUT', { profilePic: data.url });
+                app.user.profilePic = data.url;
                 app.profile.updateDisplay();
                 app.ui.toast("Avatar updated", "success");
-            } catch (err) {
-                app.ui.toast("Upload failed", "error");
-            }
+            } catch (err) { }
         },
         updateDisplay() {
             const headerAvatar = document.getElementById('headerAvatar');
@@ -141,62 +467,196 @@ const app = {
                 const el = document.getElementById(id);
                 if (el) el.innerHTML = pic ? `<img src="${pic}">` : (app.user.name ? app.user.name.charAt(0) : '');
             });
+        },
+        async saveGeneralSettings() {
+            const email = document.getElementById('profEmail').value;
+            const city = document.getElementById('profCity').value;
+            try {
+                const updated = await app.api('/profile', 'PUT', { email, city });
+                app.user = updated;
+                app.ui.toast("Profile updated", "success");
+            } catch (err) { app.ui.toast("Failed to save", "error"); }
+        },
+        async saveDocSettings() {
+            const specialization = document.getElementById('profSpecialization').value;
+            const clinicAddress = document.getElementById('profClinic').value;
+            const contactInfo = document.getElementById('profContact').value;
+            try {
+                const updated = await app.api('/profile', 'PUT', { specialization, clinicAddress, contactInfo });
+                app.user = updated;
+                app.ui.toast("Professional info updated", "success");
+            } catch (err) { app.ui.toast("Failed to save", "error"); }
+        },
+        async uploadProfessionalDocs() {
+            const cvFile = document.getElementById('doctorCvFile')?.files[0];
+            const certFile = document.getElementById('doctorCertFile')?.files[0];
+            
+            if (!cvFile && !certFile) return app.ui.toast("Select a file to upload", "info");
+
+            try {
+                const updates = {};
+                if (cvFile) {
+                    const formData = new FormData();
+                    formData.append('file', cvFile);
+                    const data = await app.apiUpload('/users/upload', formData);
+                    updates.licenseIdUrl = data.url; // Use as primary doc
+                }
+                if (certFile) {
+                    const formData = new FormData();
+                    formData.append('file', certFile);
+                    const data = await app.apiUpload('/users/upload', formData);
+                    updates.certificatesUrls = [data.url];
+                }
+                
+                await app.api('/profile', 'PUT', updates);
+                app.ui.toast("Documents synced", "success");
+                app.ui.renderProfile();
+            } catch (err) { }
         }
     },
 
     auth: {
         init() {
-            const token = localStorage.getItem('mr_token');
-            if (token) {
-                // Use raw fetch so we can silently clear a stale token
-                // without showing a confusing error toast to the user
-                const baseUrl = window.location.protocol === 'file:' ? 'http://localhost:5000/api' : '/api';
-                fetch(`${baseUrl}/users/profile`, {
-                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-                })
-                .then(r => r.ok ? r.json() : Promise.reject())
-                .then(user => { app.user = user; app.ui.showApp(); })
-                .catch(() => {
-                    // Token is stale or server restarted — clear silently
-                    localStorage.removeItem('mr_token');
-                    app.user = null;
-                    app.ui.showLogin();
-                });
-                return;
+            // PUBLIC ACCESS MODE — no authentication required
+            // Set a default guest user so the app loads without login
+            if (!app.user) {
+                app.user = {
+                    id: 'guest_user',
+                    name: 'Welcome Guest',
+                    roles: ['patient'],
+                    activeRole: 'patient',
+                    phone: '01000000000',
+                    email: 'guest@medrecord.local',
+                    city: 'Cairo',
+                    governorate: 'Cairo'
+                };
             }
-            app.ui.showLogin();
+            
+            // Load app directly without login screen
+            app.ui.showApp();
         },
 
         async register(e) {
             e.preventDefault();
-            const u = {
-                id:       document.getElementById('regId').value.trim(),
-                name:     document.getElementById('regName').value.trim(),
-                phone:    document.getElementById('regPhone').value.trim(),
-                email:    document.getElementById('regEmail').value.trim() || null,
-                password: document.getElementById('regPassword').value
-            };
+            const id = document.getElementById('regId').value.trim();
+            const name = document.getElementById('regName').value.trim();
+            const phone = document.getElementById('regPhone').value.trim();
+            const email = document.getElementById('regEmail').value.trim();
+            const password = document.getElementById('regPassword').value;
+            const age = document.getElementById('regAge').value;
+            const dob = document.getElementById('regDOB').value;
+            const gender = document.getElementById('regGender').value;
+            const city = document.getElementById('regCity').value.trim();
+            const gov = document.getElementById('regGov').value;
 
-            if (!u.id || !u.name || !u.phone || !u.password) {
-                app.ui.toast('Please fill in all required fields', 'error');
+            // ════════════════════════════════════════════════════════════════
+            // FRONTEND VALIDATION
+            // ════════════════════════════════════════════════════════════════
+
+            // National ID
+            const idVal = app.validators.nationalId(id);
+            if (!idVal.valid) {
+                app.ui.toast(idVal.message, 'error');
                 return;
             }
 
-            try {
-                // Step 1: Register the account
-                await app.api('/auth/register', 'POST', u);
+            // Name
+            const nameVal = app.validators.name(name, 'Full name');
+            if (!nameVal.valid) {
+                app.ui.toast(nameVal.message, 'error');
+                return;
+            }
 
-                // Step 2: Automatically log in so the user doesn't have to
-                const loginRes = await app.api('/auth/login', 'POST', {
-                    loginId: u.phone,
-                    password: u.password
-                });
-                localStorage.setItem('mr_token', loginRes.token);
-                app.user = loginRes.user;
-                app.ui.toast('Account created! Welcome, ' + loginRes.user.name, 'success');
-                app.ui.showApp();
+            // Phone
+            const phoneVal = app.validators.phoneNumber(phone);
+            if (!phoneVal.valid) {
+                app.ui.toast(phoneVal.message, 'error');
+                return;
+            }
+
+            // Email (if provided)
+            if (email) {
+                const emailVal = app.validators.email(email);
+                if (!emailVal.valid) {
+                    app.ui.toast(emailVal.message, 'error');
+                    return;
+                }
+            }
+
+            // Password
+            const passVal = app.validators.password(password);
+            if (!passVal.valid) {
+                app.ui.toast(passVal.message, 'error');
+                return;
+            }
+
+            // Age or DOB (at least one required)
+            let selectedAge = null;
+            let selectedDOB = null;
+
+            if (age) {
+                const ageVal = app.validators.age(age);
+                if (!ageVal.valid) {
+                    app.ui.toast(ageVal.message, 'error');
+                    return;
+                }
+                selectedAge = ageVal.value;
+            } else if (dob) {
+                const dobVal = app.validators.dateOfBirth(dob);
+                if (!dobVal.valid) {
+                    app.ui.toast(dobVal.message, 'error');
+                    return;
+                }
+                selectedDOB = dobVal.value;
+            } else {
+                app.ui.toast('Please provide either age or date of birth', 'error');
+                return;
+            }
+
+            // Gender (if provided)
+            if (gender) {
+                const genderVal = app.validators.gender(gender);
+                if (!genderVal.valid) {
+                    app.ui.toast(genderVal.message, 'error');
+                    return;
+                }
+            }
+
+            // City
+            if (!city) {
+                app.ui.toast('City is required', 'error');
+                return;
+            }
+
+            // Governorate
+            const govVal = app.validators.governorate(gov);
+            if (!govVal.valid) {
+                app.ui.toast(govVal.message, 'error');
+                return;
+            }
+
+            // ════════════════════════════════════════════════════════════════
+            // SEND TO BACKEND (BACKEND WILL VALIDATE AGAIN)
+            // ════════════════════════════════════════════════════════════════
+
+            try {
+                const body = {
+                    id: idVal.value,
+                    name: nameVal.value,
+                    phone: phoneVal.value,
+                    email: email || null,
+                    password,
+                    age: selectedAge,
+                    dateOfBirth: selectedDOB,
+                    gender: gender || null,
+                    city: city,
+                    governorate: govVal.value
+                };
+                await app.api('/register', 'POST', body);
+                app.ui.toast("Registered! Please login", "success");
+                app.ui.showLogin();
             } catch (err) {
-                // Error toast is already shown by app.api() — nothing extra needed
+                app.ui.toast(err.message || "Registration failed", "error");
             }
         },
 
@@ -211,7 +671,7 @@ const app = {
             }
 
             try {
-                const res = await app.api('/auth/login', 'POST', { loginId, password });
+                const res = await app.api('/login', 'POST', { loginId, password });
                 localStorage.setItem('mr_token', res.token);
                 app.user = res.user;
                 app.ui.toast('Welcome back, ' + res.user.name + '!', 'success');
@@ -221,8 +681,29 @@ const app = {
 
         logout() {
             localStorage.removeItem('mr_token');
+            if (app.ui.notifInterval) clearInterval(app.ui.notifInterval);
+            
+            // Reset to guest user for public access
+            app.user = {
+                id: 'guest_user',
+                name: 'Welcome Guest',
+                roles: ['patient'],
+                activeRole: 'patient',
+                phone: '01000000000',
+                email: 'guest@medrecord.local',
+                city: 'Cairo',
+                governorate: 'Cairo'
+            };
+            
+            app.ui.showApp();
+            app.ui.toast('You have been logged out. Browsing as guest.', 'info');
+        },
+
+        // Allow users to switch to login mode from demo/public browsing
+        switchToLogin() {
+            if (app.ui.notifInterval) clearInterval(app.ui.notifInterval);
             app.user = null;
-            location.reload();
+            app.ui.showLogin();
         }
     },
 
@@ -245,6 +726,13 @@ const app = {
             } catch (err) {
                 app.ui.toast("Camera access denied or not available", "error");
                 this.hideCamera();
+            }
+        },
+        toggleNotifs() {
+            const dropdown = document.getElementById('notifDropdown');
+            if (dropdown) dropdown.classList.toggle('hidden');
+            if (!dropdown.classList.contains('hidden')) {
+                app.notifications.load();
             }
         },
         hideCamera() {
@@ -282,57 +770,18 @@ const app = {
                 switcher?.classList.add('hidden');
             }
 
-            const nav = document.getElementById('navMenu');
-            if (!nav) return;
-            let navHtml = '';
-            
-            if (app.user.activeRole === 'patient') {
-                navHtml = `
-                    <a href="#" class="nav-item active" onclick="app.ui.renderPatientDashboard(); return false;">
-                        <i class="fa-solid fa-user"></i> <span data-i18n="my_profile">My Profile</span>
-                    </a>
-                    <a href="#" class="nav-item" onclick="app.ui.renderChatView(); return false;">
-                        <i class="fa-solid fa-message"></i> <span data-i18n="nav_messages">Messages</span>
-                    </a>
-                    <a href="#" class="nav-item" onclick="app.ui.renderAppointments(); return false;">
-                        <i class="fa-solid fa-calendar-check"></i> <span data-i18n="nav_appointments">Appointments</span>
-                    </a>
-                `;
-                document.getElementById('doctorSearch')?.classList.add('hidden');
-                document.getElementById('patientDoctorSelect')?.classList.remove('hidden');
-                this.renderPatientDashboard();
-            } else if (app.user.activeRole === 'doctor') {
-                navHtml = `
-                    <a href="#" class="nav-item active" onclick="app.ui.renderDoctorDashboard(); return false;">
-                        <i class="fa-solid fa-hospital-user"></i> <span data-i18n="nav_patients">Patients</span>
-                    </a>
-                    <a href="#" class="nav-item" onclick="app.ui.renderChatView(); return false;">
-                        <i class="fa-solid fa-message"></i> <span data-i18n="nav_messages">Messages</span>
-                    </a>
-                    <a href="#" class="nav-item" onclick="app.ui.renderAppointments(); return false;">
-                        <i class="fa-solid fa-calendar-check"></i> <span data-i18n="nav_appointments">Appointments</span>
-                    </a>
-                `;
-                document.getElementById('doctorSearch')?.classList.remove('hidden');
-                document.getElementById('patientDoctorSelect')?.classList.add('hidden');
-                this.renderDoctorDashboard();
-            } else if (app.user.activeRole === 'admin') {
-                navHtml = `
-                    <a href="#" class="nav-item active" onclick="app.ui.renderAdminPanel(); return false;">
-                        <i class="fa-solid fa-shield-halved"></i> <span data-i18n="admin_panel">Admin Panel</span>
-                    </a>
-                `;
-                document.getElementById('doctorSearch')?.classList.add('hidden');
-                document.getElementById('patientDoctorSelect')?.classList.add('hidden');
-                this.renderAdminPanel();
-            }
+            // Start Notification Polling
+            app.notifications.load();
+            this.notifInterval = setInterval(() => app.notifications.load(), 30000);
 
-            navHtml += `
-                <a href="#" class="nav-item" onclick="app.ui.renderSettings(); return false;">
-                    <i class="fa-solid fa-cog"></i> <span data-i18n="nav_settings">Settings</span>
-                </a>
-            `;
-            nav.innerHTML = navHtml;
+            // Initial view based on role
+            if (app.user.activeRole === 'patient') {
+                this.showView('dashboard');
+            } else if (app.user.activeRole === 'doctor') {
+                this.showView('dashboard');
+            } else if (app.user.activeRole === 'admin') {
+                this.showView('admin');
+            }
             app.i18n.apply();
         },
 
@@ -351,46 +800,109 @@ const app = {
             } catch (err) {}
         },
 
+        updateNav(active) {
+            const nav = document.getElementById('navMenu');
+            if (!nav) return;
+            let navHtml = '';
+            
+            if (app.user.activeRole === 'patient') {
+                navHtml += `<a href="#" class="nav-item ${active === 'dashboard' ? 'active' : ''}" onclick="app.ui.showView('dashboard')"><i class="fa-solid fa-house"></i> <span data-i18n="nav_dashboard">${app.translations[app.lang].nav_dashboard}</span></a>`;
+                navHtml += `<a href="#" class="nav-item ${active === 'pharmacy' ? 'active' : ''}" onclick="app.ui.showView('pharmacy')"><i class="fa-solid fa-capsules"></i> <span data-i18n="nav_pharmacy">Pharmacies</span></a>`;
+                navHtml += `<a href="#" class="nav-item ${active === 'messages' ? 'active' : ''}" onclick="app.ui.showView('messages')"><i class="fa-solid fa-message"></i> <span data-i18n="nav_messages">${app.translations[app.lang].nav_messages}</span></a>`;
+                navHtml += `<a href="#" class="nav-item ${active === 'appointments' ? 'active' : ''}" onclick="app.ui.showView('appointments')"><i class="fa-solid fa-calendar-check"></i> <span data-i18n="nav_appointments">${app.translations[app.lang].nav_appointments}</span></a>`;
+            } else if (app.user.activeRole === 'doctor') {
+                navHtml += `<a href="#" class="nav-item ${active === 'dashboard' ? 'active' : ''}" onclick="app.ui.showView('dashboard')"><i class="fa-solid fa-hospital-user"></i> <span data-i18n="nav_patients">${app.translations[app.lang].nav_patients}</span></a>`;
+                navHtml += `<a href="#" class="nav-item ${active === 'messages' ? 'active' : ''}" onclick="app.ui.showView('messages')"><i class="fa-solid fa-message"></i> <span data-i18n="nav_messages">${app.translations[app.lang].nav_messages}</span></a>`;
+                navHtml += `<a href="#" class="nav-item ${active === 'appointments' ? 'active' : ''}" onclick="app.ui.showView('appointments')"><i class="fa-solid fa-calendar-check"></i> <span data-i18n="nav_appointments">${app.translations[app.lang].nav_appointments}</span></a>`;
+            } else if (app.user.activeRole === 'admin') {
+                navHtml += `<a href="#" class="nav-item ${active === 'admin' ? 'active' : ''}" onclick="app.ui.showView('admin')"><i class="fa-solid fa-shield-halved"></i> <span data-i18n="admin_panel">Admin Panel</span></a>`;
+            }
+
+            navHtml += `
+                <a href="#" class="nav-item ${active === 'profile' ? 'active' : ''}" onclick="app.ui.showView('profile')">
+                    <i class="fa-solid fa-user-gear"></i> <span data-i18n="my_profile">My Profile</span>
+                </a>
+                <a href="#" class="nav-item ${active === 'settings' ? 'active' : ''}" onclick="app.ui.showView('settings')">
+                    <i class="fa-solid fa-cog"></i> <span data-i18n="nav_settings">Settings</span>
+                </a>
+            `;
+            nav.innerHTML = navHtml;
+            app.i18n.apply();
+        },
+
+        showView(view) {
+            document.querySelectorAll('.dashboard-content').forEach(c => c.classList.add('hidden'));
+            const mainView = document.getElementById('mainView');
+            const pharmacySearchSection = document.getElementById('pharmacySearchSection');
+            const doctorSearch = document.getElementById('doctorSearch');
+            const patientDoctorSelect = document.getElementById('patientDoctorSelect');
+
+            if (mainView) mainView.classList.remove('hidden');
+            if (pharmacySearchSection) pharmacySearchSection.classList.add('hidden');
+            if (doctorSearch) doctorSearch.classList.add('hidden');
+            if (patientDoctorSelect) patientDoctorSelect.classList.add('hidden');
+
+            if (view === 'pharmacy') {
+                if (pharmacySearchSection) pharmacySearchSection.classList.remove('hidden');
+                if (mainView) mainView.classList.add('hidden');
+                app.pharmacy.renderSearch();
+            } else {
+                if (view === 'dashboard') {
+                    if (app.user.activeRole === 'patient') {
+                        app.ui.renderPatientDashboard();
+                        if (patientDoctorSelect) patientDoctorSelect.classList.remove('hidden');
+                    } else if (app.user.activeRole === 'doctor') {
+                        app.ui.renderDoctorDashboard();
+                        if (doctorSearch) doctorSearch.classList.remove('hidden');
+                    } else if (app.user.activeRole === 'admin') {
+                        app.ui.renderAdminPanel();
+                    }
+                } else if (view === 'profile') {
+                    app.ui.renderProfile();
+                } else if (view === 'messages') {
+                    app.ui.renderChatView();
+                } else if (view === 'appointments') {
+                    app.ui.renderAppointments();
+                } else if (view === 'settings') {
+                    app.ui.renderSettings();
+                } else if (view === 'admin') {
+                    app.ui.renderAdminPanel();
+                }
+            }
+            this.updateNav(view);
+        },
+
         async renderPatientDashboard() {
             const p = app.user;
             const html = `
-                <div class="profile-hero stagger-1" style="text-align:center; padding: 40px 0; background: linear-gradient(rgba(46, 134, 193, 0.05), white); border-radius: 20px; margin-bottom: 30px;">
-                    <div class="avatar-container" style="width:120px; height:120px; margin: 0 auto 20px;" onclick="app.profile.triggerUpload()">
-                        <div class="avatar large" id="heroAvatar">${p.profilePic ? `<img src="${p.profilePic}">` : p.name.charAt(0)}</div>
-                        <div class="avatar-overlay" style="font-size:24px;"><i class="fa-solid fa-camera"></i></div>
-                    </div>
-                    <h1 class="page-title" style="margin:0; font-size:32px;">${p.name}</h1>
-                    <p class="text-muted" style="font-size:16px;">${app.translations[app.lang].role_patient} | ID: ${p.id}</p>
+                <div class="content-header">
+                    <h1 class="page-title" data-i18n="nav_dashboard">Dashboard</h1>
                 </div>
                 
-                <div class="content-grid">
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:30px;">
-                        <div class="card stagger-2">
-                            <div class="card-header"><h2 data-i18n="personal_info">Personal Information</h2></div>
-                            <div style="display:grid; gap:15px;">
-                                <div><label class="text-muted" style="display:block; font-size:11px; text-transform:uppercase; font-weight:700;">National ID</label> <div style="font-weight:600;">${p.id}</div></div>
-                                <div><label class="text-muted" style="display:block; font-size:11px; text-transform:uppercase; font-weight:700;">Phone</label> <div style="font-weight:600;">${p.phone}</div></div>
-                                <div><label class="text-muted" style="display:block; font-size:11px; text-transform:uppercase; font-weight:700;">Email</label> <div style="font-weight:600;">${p.email}</div></div>
-                            </div>
-                            <button class="btn secondary-btn full-width mt-4" onclick="app.ui.toast('Edit coming soon', 'info')">Edit Information</button>
+                <div class="dashboard-widgets">
+                    <div class="card stagger-2">
+                        <div class="card-header"><h2 data-i18n="patient_status">Medical Status</h2></div>
+                        <div class="status-indicator" style="display:flex; align-items:center; gap:15px; padding:10px 0;">
+                            <div style="width:12px; height:12px; border-radius:50%; background:var(--success);"></div>
+                            <span style="font-weight:600;">Account Active & Verified</span>
                         </div>
-                        
-                        <div class="card stagger-3">
-                            <div class="card-header"><h2 data-i18n="prescriptions_upload">Quick Actions</h2></div>
-                            <div class="form-group">
-                             <div class="form-group">
-                                <label>Medical File (PDF or Image)</label>
-                                <div style="display:flex; gap:10px;">
-                                    <input type="file" id="patientFileRx" accept="image/*,.pdf" style="flex:1; padding:10px; font-size:12px;">
-                                    <button class="btn secondary-btn small" onclick="app.ui.showCamera()"><i class="fa-solid fa-camera"></i> Camera</button>
-                                </div>
-                            </div>
-                            <button class="btn primary-btn full-width mb-3" onclick="app.patient.uploadPrescription()"><i class="fa-solid fa-upload"></i> Upload & Sync</button>
-                            <hr style="border:0; border-top:1px solid var(--border); margin: 20px 0;">
-                            <div id="doctorApplySection">
-                                <button class="btn secondary-btn full-width" onclick="app.ui.showDoctorApply()">Apply as Doctor</button>
+                        <p class="text-muted" style="font-size:13px;">Your medical records are synchronized and up to date.</p>
+                    </div>
+                    
+                    <div class="card stagger-3">
+                        <div class="card-header"><h2 data-i18n="prescriptions_upload">Quick Upload</h2></div>
+                        <div class="form-group">
+                            <label>Medical File (PDF or Image)</label>
+                            <div style="display:flex; gap:10px;">
+                                <input type="file" id="patientFileRx" accept="image/*,.pdf" style="flex:1; padding:10px; font-size:12px;">
+                                <button class="btn secondary-btn small" onclick="app.ui.showCamera()">
+                                    <i class="fa-solid fa-camera"></i>
+                                </button>
                             </div>
                         </div>
+                        <button class="btn primary-btn full-width" onclick="app.patient.uploadPrescription()">
+                            <i class="fa-solid fa-upload"></i> Upload & Sync
+                        </button>
                     </div>
                 </div>
 
@@ -402,6 +914,95 @@ const app = {
             const mainView = document.getElementById('mainView');
             if (mainView) mainView.innerHTML = html;
             app.patient.loadPrescriptions();
+            app.i18n.apply();
+        },
+
+        renderProfile() {
+            const p = app.user;
+            const isDoc = p.roles.includes('doctor');
+            const html = `
+                <div class="content-header">
+                    <h1 class="page-title" data-i18n="my_profile">My Profile</h1>
+                </div>
+
+                <div class="profile-hero card stagger-1 mb-4" style="display:flex; align-items:center; gap :30px; padding:30px;">
+                    <div class="avatar-container" style="width:120px; height:120px;" onclick="app.profile.triggerUpload()">
+                        <div class="avatar large" id="heroAvatar">${p.profilePic ? `<img src="${p.profilePic}">` : p.name.charAt(0)}</div>
+                        <div class="avatar-overlay" style="font-size:24px;"><i class="fa-solid fa-camera"></i></div>
+                    </div>
+                    <div>
+                        <h1 style="margin:0; font-size:28px;">${p.name}</h1>
+                        <p class="text-muted">${app.translations[app.lang][`role_${p.activeRole}`]} | ID: ${p.id}</p>
+                        <div style="display:flex; gap:10px; margin-top:8px;">
+                            <span class="status-badge approved">${p.isVerified ? 'Verified' : 'Unverified'}</span>
+                            ${isDoc ? '<span class="status-badge approved">Professional</span>' : ''}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dashboard-widgets">
+                    <div class="card stagger-2">
+                        <div class="card-header"><h2>Account Settings</h2></div>
+                        <div class="form-group">
+                            <label>Full Name</label>
+                            <input type="text" value="${p.name}" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label>Phone Number</label>
+                            <input type="text" value="${p.phone}" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label>Email Address</label>
+                            <input type="email" id="profEmail" value="${p.email || ''}">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label>City</label>
+                                <input type="text" id="profCity" value="${p.city || ''}">
+                            </div>
+                            <div class="form-group half">
+                                <label>Governorate</label>
+                                <input type="text" value="${p.governorate}" disabled>
+                            </div>
+                        </div>
+                        <button class="btn primary-btn full-width" onclick="app.profile.saveGeneralSettings()">Save Changes</button>
+                    </div>
+
+                    ${isDoc ? `
+                    <div class="card stagger-3">
+                        <div class="card-header"><h2>Professional Center</h2></div>
+                        <div class="form-group">
+                            <label>Specialization</label>
+                            <input type="text" id="profSpecialization" value="${p.specialization || ''}">
+                        </div>
+                        <div class="form-group">
+                            <label>Clinic Address</label>
+                            <input type="text" id="profClinic" value="${p.clinicAddress || ''}">
+                        </div>
+                        <div class="form-group">
+                            <label>Contact Info</label>
+                            <input type="text" id="profContact" value="${p.contactInfo || ''}">
+                        </div>
+                        <hr class="mb-4 mt-4">
+                        <h3 style="font-size:14px; margin-bottom:15px;">Professional Documents</h3>
+                        <div class="form-group">
+                            <label>CV & Certificates (PDF/Images)</label>
+                            <input type="file" id="doctorCvFile" accept="image/*,.pdf" class="mb-2">
+                        </div>
+                        <button class="btn secondary-btn full-width mb-3" onclick="app.profile.uploadProfessionalDocs()">Sync Files</button>
+                        <button class="btn primary-btn full-width" onclick="app.profile.saveDocSettings()">Update Pro Info</button>
+                    </div>
+                    ` : `
+                    <div class="card stagger-3">
+                        <div class="card-header"><h2>Special Access</h2></div>
+                        <p class="text-muted mb-4">Are you a healthcare professional? Secure your official doctor account to start providing care.</p>
+                        <button class="btn secondary-btn full-width" onclick="app.ui.showDoctorApply()">Apply for Doctor Role</button>
+                    </div>
+                    `}
+                </div>
+            `;
+            const mainView = document.getElementById('mainView');
+            if (mainView) mainView.innerHTML = html;
             app.i18n.apply();
         },
 
@@ -458,7 +1059,7 @@ const app = {
 
         async showAptBooking() {
             try {
-                const docs = await app.api('/users/doctors');
+                const docs = await app.api('/doctors');
                 const html = `
                     <div class="card" style="max-width:500px; margin: 40px auto;">
                         <div class="card-header"><h2>${app.translations[app.lang].book_apt}</h2></div>
@@ -500,7 +1101,7 @@ const app = {
             }
 
             try {
-                const partner = await app.api(`/users/profile?id=${partnerId}`); 
+                const partner = await app.api(`/profile?id=${partnerId}`); 
                 const html = `
                     <div class="card" style="height: calc(100vh - 150px); display:flex; flex-direction:column; padding:0; overflow:hidden;">
                         <div class="card-header" style="padding: 15px 24px; background: white; margin:0;">
@@ -522,6 +1123,74 @@ const app = {
                 app.chat.loadMessages();
                 app.i18n.apply();
             } catch (err) {}
+        },
+
+        toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar) {
+                sidebar.classList.toggle('open');
+                const overlay = document.getElementById('sidebarOverlay');
+                if (overlay) overlay.style.display = sidebar.classList.contains('open') ? 'block' : 'none';
+            }
+        },
+
+        closeSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar) {
+                sidebar.classList.remove('open');
+                const overlay = document.getElementById('sidebarOverlay');
+                if (overlay) overlay.style.display = 'none';
+            }
+        },
+
+        // Family Member UI Functions
+        showAddFamilyMemberForm() {
+            const form = document.getElementById('familyMemberFormContainer');
+            if (form) {
+                form.classList.remove('hidden');
+                document.getElementById('familyFormTitle').textContent = 'Add Family Member';
+                // Clear form fields
+                document.getElementById('familyFullName').value = '';
+                document.getElementById('familyAge').value = '';
+                document.getElementById('familyDOB').value = '';
+                document.getElementById('familyGender').value = '';
+                document.getElementById('familyRelationship').value = '';
+                document.getElementById('familyNationalId').value = '';
+                document.getElementById('familyBloodType').value = '';
+                document.getElementById('familyAllergies').value = '';
+                document.getElementById('familyConditions').value = '';
+                document.getElementById('familyMedications').value = '';
+                document.getElementById('familyNotes').value = '';
+                app.currentFamilyMemberId = null;
+            }
+        },
+
+        hideFamilyMemberForm() {
+            const form = document.getElementById('familyMemberFormContainer');
+            if (form) {
+                form.classList.add('hidden');
+                app.currentFamilyMemberId = null;
+            }
+        },
+
+        showEditFamilyMemberForm(memberId, member) {
+            const form = document.getElementById('familyMemberFormContainer');
+            if (form) {
+                form.classList.remove('hidden');
+                document.getElementById('familyFormTitle').textContent = 'Edit Family Member';
+                document.getElementById('familyFullName').value = member.fullName || '';
+                document.getElementById('familyAge').value = member.age || '';
+                document.getElementById('familyDOB').value = member.dateOfBirth || '';
+                document.getElementById('familyGender').value = member.gender || '';
+                document.getElementById('familyRelationship').value = member.relationship || '';
+                document.getElementById('familyNationalId').value = member.nationalId || '';
+                document.getElementById('familyBloodType').value = member.bloodType || '';
+                document.getElementById('familyAllergies').value = (member.allergies || []).join(', ');
+                document.getElementById('familyConditions').value = (member.chronicConditions || []).join(', ');
+                document.getElementById('familyMedications').value = (member.medications || []).join(', ');
+                document.getElementById('familyNotes').value = member.medicalNotes || '';
+                app.currentFamilyMemberId = memberId;
+            }
         },
 
         async renderAdminPanel() {
@@ -566,6 +1235,8 @@ const app = {
         renderSettings() {
             const html = `
                 <div class="content-header"><h1 class="page-title" data-i18n="nav_settings">Settings</h1></div>
+                
+                <!-- Preferences Card -->
                 <div class="content-grid" style="max-width: 800px;">
                     <div class="card stagger-1">
                         <div class="card-header"><h2>Preferences</h2></div>
@@ -574,11 +1245,115 @@ const app = {
                             <button class="btn secondary-btn small" onclick="app.i18n.toggle()">${app.lang === 'en' ? 'عربي' : 'English'}</button>
                         </div>
                     </div>
+
+                    <!-- Family Members Management Card -->
+                    <div class="card stagger-2">
+                        <div class="card-header">
+                            <h2>Manage Family Members</h2>
+                            <button class="btn primary-btn small" onclick="app.ui.showAddFamilyMemberForm()">
+                                <i class="fa-solid fa-person-plus"></i> Add Member
+                            </button>
+                        </div>
+                        <div id="familyMembersContainer" style="padding: 15px 0;">
+                            <p style="color: var(--text-muted); text-align: center; padding: 20px;">Loading family members...</p>
+                        </div>
+                    </div>
+
+                    <!-- Add/Edit Family Member Form (Hidden) -->
+                    <div id="familyMemberFormContainer" class="card stagger-2 hidden">
+                        <div class="card-header">
+                            <h2 id="familyFormTitle">Add Family Member</h2>
+                            <button class="btn icon-btn" onclick="app.ui.hideFamilyMemberForm()"><i class="fa-solid fa-times"></i></button>
+                        </div>
+                        <form onsubmit="app.family.saveFamilyMember(event)">
+                            <div class="form-group">
+                                <label>Full Name *</label>
+                                <input type="text" id="familyFullName" required placeholder="Full name">
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group half">
+                                    <label>Age</label>
+                                    <input type="number" id="familyAge" min="1" max="150" placeholder="Age">
+                                </div>
+                                <div class="form-group half">
+                                    <label>Date of Birth</label>
+                                    <input type="date" id="familyDOB">
+                                </div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group half">
+                                    <label>Gender *</label>
+                                    <select id="familyGender" required>
+                                        <option value="">Select Gender</option>
+                                        <option value="male">Male</option>
+                                        <option value="female">Female</option>
+                                        <option value="other">Other</option>
+                                    </select>
+                                </div>
+                                <div class="form-group half">
+                                    <label>Relationship *</label>
+                                    <select id="familyRelationship" required>
+                                        <option value="">Select Relationship</option>
+                                        <option value="spouse">Spouse</option>
+                                        <option value="son">Son</option>
+                                        <option value="daughter">Daughter</option>
+                                        <option value="parent">Parent</option>
+                                        <option value="sibling">Sibling</option>
+                                        <option value="dependent">Dependent</option>
+                                        <option value="other">Other</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label>National ID (Optional)</label>
+                                <input type="text" id="familyNationalId" placeholder="14-digit national ID">
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group half">
+                                    <label>Blood Type</label>
+                                    <select id="familyBloodType">
+                                        <option value="">Select Blood Type</option>
+                                        <option value="O+">O+</option><option value="O-">O-</option>
+                                        <option value="A+">A+</option><option value="A-">A-</option>
+                                        <option value="B+">B+</option><option value="B-">B-</option>
+                                        <option value="AB+">AB+</option><option value="AB-">AB-</option>
+                                    </select>
+                                </div>
+                                <div class="form-group half">
+                                    <label>Allergies (comma separated)</label>
+                                    <input type="text" id="familyAllergies" placeholder="e.g., Peanuts, Penicillin">
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Chronic Conditions (comma separated)</label>
+                                <input type="text" id="familyConditions" placeholder="e.g., Diabetes, Hypertension">
+                            </div>
+
+                            <div class="form-group">
+                                <label>Current Medications (comma separated)</label>
+                                <input type="text" id="familyMedications" placeholder="e.g., Metformin, Lisinopril">
+                            </div>
+
+                            <div class="form-group">
+                                <label>Medical Notes</label>
+                                <textarea id="familyNotes" style="resize: vertical; min-height: 80px; padding: 12px;" placeholder="Add any additional medical notes..."></textarea>
+                            </div>
+
+                            <button type="submit" class="btn primary-btn full-width">Save Family Member</button>
+                        </form>
+                    </div>
+
                     <button class="btn secondary-btn full-width mt-4" onclick="app.auth.logout()">Logout</button>
                 </div>
             `;
             const mainView = document.getElementById('mainView');
             if (mainView) mainView.innerHTML = html;
+            app.family.loadFamilyMembers();
             app.i18n.apply();
         },
 
@@ -601,12 +1376,12 @@ const app = {
             if (!p) return this.renderDoctorDashboard();
 
             const html = `
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+                <div class="content-header" style="flex-wrap: wrap; gap: 15px;">
                     <h1 class="page-title m-0">Patient: ${p.name}</h1>
                     <button class="btn primary-btn" onclick="app.currentChatPartner='${p.id}'; app.ui.renderChatView();">Message Patient</button>
                 </div>
-                <div class="content-grid">
-                    <div class="card">
+                <div class="dashboard-widgets">
+                    <div class="card stagger-1">
                         <div class="card-header"><h2>Write Prescription</h2></div>
                         <div class="form-group"><label>Medications</label><input type="text" id="rxMeds"></div>
                         <div class="form-group"><label>Notes</label><input type="text" id="rxNotes"></div>
@@ -617,9 +1392,9 @@ const app = {
                                 <button class="btn secondary-btn small" onclick="app.ui.showCamera(); app.doctor.activeCapture=true;"><i class="fa-solid fa-camera"></i></button>
                             </div>
                         </div>
-                        <button class="btn primary-btn full-width" onclick="app.doctor.prescribe()">Send Prescription</button>
+                        <button class="btn primary-btn full-width mt-3" onclick="app.doctor.prescribe()">Send Prescription</button>
                     </div>
-                    <div class="card">
+                    <div class="card stagger-2">
                         <div class="card-header"><h2>History</h2></div>
                         <div id="doctorPrescriptionsList"></div>
                     </div>
@@ -632,51 +1407,11 @@ const app = {
         }
     },
 
-    patient: {
-        async searchDoctor() {
-            const name = document.getElementById('doctorSearchInput').value.toLowerCase().trim();
-            if (!name) return app.ui.toast("Please enter a name", "error");
-            try {
-                const docs = await app.api('/users/doctors');
-                const found = docs.find(d => d.name.toLowerCase().includes(name));
-                if (!found) return app.ui.toast("Doctor not found", "error");
-                app.currentChatPartner = found.id;
-                app.ui.renderChatView();
-            } catch (err) {}
-        },
-        async loadPrescriptions() {
-            try {
-                const list = await app.api('/clinical/prescriptions');
-                const container = document.getElementById('patientPrescriptionsList');
-                if (!container) return;
-                container.innerHTML = list.length === 0 ? '<p>No prescriptions found.</p>' : list.reverse().map(rx => `
-                    <div class="card mb-2">
-                        <div style="display:flex; justify-content:space-between;"><strong>${rx.medications}</strong> <span>${new Date(rx.date).toLocaleDateString()}</span></div>
-                        <p>${rx.notes}</p>
-                        <div style="display:flex; gap:10px; margin-top:10px;">
-                            ${rx.fileUrl ? `<a href="${rx.fileUrl}" target="_blank" class="btn text-btn small"><i class="fa-solid fa-file-pdf"></i> View File</a>` : ''}
-                            <button class="btn secondary-btn small" onclick="app.patient.exportToPDF('${rx._id}')"><i class="fa-solid fa-file-export"></i> Export PDF</button>
-                        </div>
-                    </div>
-                `).join('');
-            } catch (err) {}
-        },
-        async uploadPrescription() {
-            const fileInput = document.getElementById('patientFileRx');
-            if (!fileInput.files.length) return app.ui.toast("Select a file", "error");
-            const formData = new FormData();
-            formData.append('file', fileInput.files[0]);
-            try {
-                const res = await fetch('/api/users/upload', {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${localStorage.getItem('mr_token')}` },
-                    body: formData
-                });
-                const { url } = await res.json();
-                await app.api('/clinical/prescribe', 'POST', { patientId: app.user.id, medications: "Self-Uploaded", notes: "File attached", fileUrl: url });
-                app.ui.toast("Uploaded", "success");
-                this.loadPrescriptions();
-            } catch (err) {}
+    clinical: {
+        handlePrescriptionFile(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            // Handle file selection and preview if needed
         },
         async captureImage() {
             const video = document.getElementById('cameraVideo');
@@ -693,13 +1428,8 @@ const app = {
                 formData.append('file', file);
 
                 try {
-                    const baseUrl = window.location.protocol === 'file:' ? 'http://localhost:5000/api' : '/api';
-                    const res = await fetch(`${baseUrl}/users/upload`, {
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${localStorage.getItem('mr_token')}` },
-                        body: formData
-                    });
-                    const { url } = await res.json();
+                    const data = await app.apiUpload('/users/upload', formData);
+                    const url = data.url;
                     
                     const isDoc = app.user.activeRole === 'doctor';
                     const patientId = isDoc ? app.currentPatient.id : app.user.id;
@@ -713,23 +1443,21 @@ const app = {
                     app.ui.toast("Captured and Uploaded", "success");
                     app.ui.hideCamera();
                     if (isDoc) app.doctor.loadPrescriptions();
-                    else this.loadPrescriptions();
+                    else app.patient.loadPrescriptions();
                 } catch (err) {}
             }, 'image/jpeg');
-        },
+        }
+    },
+
+    patient: {
         async applyForDoctor() {
             const fileInput = document.getElementById('doctorLicenseFile');
             if (!fileInput || !fileInput.files.length) return app.ui.toast("Select a file", "error");
             const formData = new FormData();
             formData.append('file', fileInput.files[0]);
             try {
-                const res = await fetch('/api/users/upload', {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${localStorage.getItem('mr_token')}` },
-                    body: formData
-                });
-                const { url } = await res.json();
-                await app.api('/users/apply', 'POST', { docUrl: url });
+                const data = await app.apiUpload('/users/upload', formData);
+                await app.api('/apply', 'POST', { docUrl: data.url });
                 app.ui.toast("Application submitted", "success");
                 app.ui.renderPatientDashboard();
             } catch (err) {}
@@ -780,7 +1508,7 @@ const app = {
         async searchPatient() {
             const id = document.getElementById('patientSearchInput').value;
             try {
-                const p = await app.api(`/users/profile?id=${id}`);
+                const p = await app.api(`/profile?id=${id}`);
                 app.currentPatient = p;
                 app.ui.renderDoctorWorkspace();
             } catch (err) {
@@ -796,14 +1524,10 @@ const app = {
             if (fileInput?.files.length) {
                 const formData = new FormData();
                 formData.append('file', fileInput.files[0]);
-                const baseUrl = window.location.protocol === 'file:' ? 'http://localhost:5000/api' : '/api';
-                const res = await fetch(`${baseUrl}/users/upload`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${localStorage.getItem('mr_token')}` },
-                    body: formData
-                });
-                const data = await res.json();
-                fileUrl = data.url;
+                try {
+                    const data = await app.apiUpload('/users/upload', formData);
+                    fileUrl = data.url;
+                } catch (err) { return; }
             }
             try {
                 await app.api('/clinical/prescribe', 'POST', { patientId: app.currentPatient.id, medications: meds, notes, fileUrl });
@@ -812,6 +1536,7 @@ const app = {
             } catch (err) {}
         },
         async loadPrescriptions() {
+            if (!app.currentPatient) return;
             try {
                 const list = await app.api(`/clinical/prescriptions?patientId=${app.currentPatient.id}`);
                 const container = document.getElementById('doctorPrescriptionsList');
@@ -833,12 +1558,13 @@ const app = {
             if (!container || !app.currentChatPartner) return;
             try {
                 const msgs = await app.api(`/messages/${app.currentChatPartner}`);
-                container.innerHTML = msgs.length === 0 ? '<p class="center text-muted">No messages yet.</p>' : msgs.map(m => {
+                container.innerHTML = msgs.length === 0 ? `<p class="center text-muted">${app.translations[app.lang].no_messages}</p>` : msgs.map(m => {
                     const me = m.senderId === app.user.id;
                     return `
-                        <div style="display:flex; justify-content: ${me ? 'flex-end' : 'flex-start'}">
-                            <div style="max-width: 70%; padding: 10px 15px; border-radius: 15px; background: ${me ? 'var(--primary)' : '#eee'}; color: ${me ? 'white' : 'black'}">
+                        <div class="message-wrapper ${me ? 'me' : 'them'}">
+                            <div class="message-bubble">
                                 ${m.content}
+                                <div class="message-time">${new Date(m.createdAt || m.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
                             </div>
                         </div>
                     `;
@@ -894,6 +1620,196 @@ const app = {
                 app.ui.toast("Rejected", "info");
                 app.ui.renderAdminPanel();
             } catch (err) {}
+        }
+    },
+
+    // ════════════════════════════════════════════════════════════════
+    // FAMILY MEMBER MANAGEMENT
+    // ════════════════════════════════════════════════════════════════
+    family: {
+        async loadFamilyMembers() {
+            try {
+                const members = await app.api('/family', 'GET');
+                const container = document.getElementById('familyMembersContainer');
+                if (!container) return;
+
+                if (!members || members.length === 0) {
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 30px; color: var(--text-muted);">
+                            <i class="fa-solid fa-people-group" style="font-size: 40px; margin-bottom: 10px; opacity: 0.5;"></i>
+                            <p>No family members added yet.</p>
+                            <button class="btn primary-btn small" onclick="app.ui.showAddFamilyMemberForm()" style="margin-top: 15px;">
+                                <i class="fa-solid fa-person-plus"></i> Add Family Member
+                            </button>
+                        </div>
+                    `;
+                    return;
+                }
+
+                let html = '<div style="display: flex; flex-direction: column; gap: 12px;">';
+                
+                members.forEach(member => {
+                    const relationshipLabel = {
+                        spouse: 'Spouse',
+                        son: 'Son',
+                        daughter: 'Daughter',
+                        parent: 'Parent',
+                        sibling: 'Sibling',
+                        dependent: 'Dependent',
+                        other: 'Other'
+                    }[member.relationship] || member.relationship;
+
+                    html += `
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: var(--bg-hover); border-radius: var(--radius);">
+                            <div style="flex: 1;">
+                                <strong style="display: block; margin-bottom: 4px;">${member.fullName}</strong>
+                                <small style="color: var(--text-muted);">
+                                    ${relationshipLabel} • Age: ${member.age} • Gender: ${member.gender === 'male' ? '♂ Male' : member.gender === 'female' ? '♀ Female' : 'Other'}
+                                </small>
+                            </div>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn icon-btn small" onclick="app.ui.showEditFamilyMemberForm('${member.id}', JSON.parse('${JSON.stringify(member).replace(/'/g, "\\'")}'))" title="Edit">
+                                    <i class="fa-solid fa-pen"></i>
+                                </button>
+                                <button class="btn icon-btn small" onclick="app.family.deleteFamilyMember('${member.id}')" title="Delete" style="color: var(--danger);">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                html += '</div>';
+                container.innerHTML = html;
+            } catch (err) {
+                const container = document.getElementById('familyMembersContainer');
+                if (container) {
+                    container.innerHTML = '<p style="color: var(--text-muted); text-align: center;">Error loading family members</p>';
+                }
+            }
+        },
+
+        async saveFamilyMember(e) {
+            e.preventDefault();
+
+            const fullName = document.getElementById('familyFullName').value.trim();
+            const age = document.getElementById('familyAge').value;
+            const dob = document.getElementById('familyDOB').value;
+            const gender = document.getElementById('familyGender').value;
+            const relationship = document.getElementById('familyRelationship').value;
+            const nationalId = document.getElementById('familyNationalId').value.trim();
+            const bloodType = document.getElementById('familyBloodType').value;
+            const allergiesStr = document.getElementById('familyAllergies').value;
+            const conditionsStr = document.getElementById('familyConditions').value;
+            const medicationsStr = document.getElementById('familyMedications').value;
+            const medicalNotes = document.getElementById('familyNotes').value;
+
+            // ════════════════════════════════════════════════════════════════
+            // FRONTEND VALIDATION
+            // ════════════════════════════════════════════════════════════════
+
+            // Full Name
+            const nameVal = app.validators.name(fullName, 'Family member name');
+            if (!nameVal.valid) {
+                app.ui.toast(nameVal.message, 'error');
+                return;
+            }
+
+            // Age or DOB (at least one required)
+            let memberAge = null;
+            let memberDOB = null;
+
+            if (age) {
+                const ageVal = app.validators.age(age);
+                if (!ageVal.valid) {
+                    app.ui.toast(ageVal.message, 'error');
+                    return;
+                }
+                memberAge = ageVal.value;
+            } else if (dob) {
+                const dobVal = app.validators.dateOfBirth(dob);
+                if (!dobVal.valid) {
+                    app.ui.toast(dobVal.message, 'error');
+                    return;
+                }
+                memberDOB = dobVal.value;
+            } else {
+                app.ui.toast('Please provide either age or date of birth', 'error');
+                return;
+            }
+
+            // Gender
+            const genderVal = app.validators.gender(gender);
+            if (!genderVal.valid) {
+                app.ui.toast(genderVal.message, 'error');
+                return;
+            }
+
+            // Relationship
+            const relVal = app.validators.relationship(relationship);
+            if (!relVal.valid) {
+                app.ui.toast(relVal.message, 'error');
+                return;
+            }
+
+            // National ID (if provided)
+            if (nationalId) {
+                const idVal = app.validators.nationalId(nationalId);
+                if (!idVal.valid) {
+                    app.ui.toast(`Family member national ID: ${idVal.message.toLowerCase()}`, 'error');
+                    return;
+                }
+            }
+
+            // ════════════════════════════════════════════════════════════════
+            // SEND TO BACKEND
+            // ════════════════════════════════════════════════════════════════
+
+            try {
+                const body = {
+                    fullName: nameVal.value,
+                    age: memberAge,
+                    dateOfBirth: memberDOB,
+                    gender: genderVal.value,
+                    relationship: relVal.value,
+                    nationalId: nationalId || null,
+                    bloodType: bloodType || null,
+                    allergies: allergiesStr ? allergiesStr.split(',').map(s => s.trim()).filter(s => s) : [],
+                    chronicConditions: conditionsStr ? conditionsStr.split(',').map(s => s.trim()).filter(s => s) : [],
+                    medications: medicationsStr ? medicationsStr.split(',').map(s => s.trim()).filter(s => s) : [],
+                    medicalNotes: medicalNotes || null
+                };
+
+                let url = '/family';
+                let method = 'POST';
+                let successMsg = 'Family member added successfully';
+
+                // If editing
+                if (app.currentFamilyMemberId) {
+                    url = `/family/${app.currentFamilyMemberId}`;
+                    method = 'PUT';
+                    successMsg = 'Family member updated successfully';
+                }
+
+                await app.api(url, method, body);
+                app.ui.toast(successMsg, 'success');
+                app.ui.hideFamilyMemberForm();
+                app.family.loadFamilyMembers();
+            } catch (err) {
+                app.ui.toast(err.message || 'Error saving family member', 'error');
+            }
+        },
+
+        async deleteFamilyMember(memberId) {
+            if (!confirm('Are you sure you want to delete this family member?')) return;
+
+            try {
+                await app.api(`/family/${memberId}`, 'DELETE');
+                app.ui.toast('Family member deleted', 'success');
+                app.family.loadFamilyMembers();
+            } catch (err) {
+                app.ui.toast(err.message || 'Error deleting family member', 'error');
+            }
         }
     }
 };
