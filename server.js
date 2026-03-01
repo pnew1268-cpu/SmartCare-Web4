@@ -1,7 +1,12 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+// load .env in development / production; ensure this file is excluded from VCS
 require('dotenv').config();
+
+// optional production security libraries
+const helmet = require('helmet');
+const compression = require('compression');
 
 const app = express();
 
@@ -9,14 +14,23 @@ const app = express();
 const DEFAULT_PORT = 3000;
 const PORT = process.env.PORT || DEFAULT_PORT;
 
+// enable production settings
+if (process.env.NODE_ENV === 'production') {
+    app.set('trust proxy', 1); // if behind a reverse proxy
+    app.use(helmet());
+    app.use(compression());
+}
+
 // Ensure MySQL credentials are available to the DB layer before it is required
 // and also create a direct mysql connection for explicit verification.
 const mysql = require('mysql2');
 
-// Set env vars so ./db picks them up (keeps existing config behavior)
+// Set env vars so ./db picks them up (these should come from .env or environment)
+// defaults are only for local development and should be overridden in production.
 process.env.DB_HOST = process.env.DB_HOST || 'localhost';
 process.env.DB_USER = process.env.DB_USER || 'medapp';
-process.env.MYSQL_PASSWORD = process.env.MYSQL_PASSWORD || 'M!nA@2026#S3cure';
+// NOTE: do NOT hardcode passwords in source; set MYSQL_PASSWORD/DB_PASSWORD via .env
+process.env.MYSQL_PASSWORD = process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || '';
 process.env.DB_NAME = process.env.DB_NAME || 'medical_system';
 
 // Direct MySQL connection for verification (as requested)
@@ -82,12 +96,25 @@ app.use('/api/clinical', require('./routes/clinical'));
 app.use('/api/admin',    require('./routes/admin'));
 app.use('/api/messages',      require('./routes/messages'));
 app.use('/api/notifications', require('./routes/notifications'));
+
+// pharmacy proxy route for real-service integration (see routes/pharmacy.js)
+app.use('/api/pharmacy', require('./routes/pharmacy'));
+
 app.use('/api', require('./routes/family')); // Family member routes
+
+// configuration endpoint (used by frontend for redirects, feature flags, etc.)
+app.get('/api/config', (req, res) => {
+    res.json({
+        externalRegistrationUrl: process.env.EXTERNAL_REGISTRATION_URL || null,
+        devMode: process.env.NODE_ENV !== 'production',
+        autoApproveDoctors: process.env.AUTO_APPROVE_DOCTORS === 'true'
+    });
+});
 
 // informational /api root to avoid plain 404 when user visits it
 app.get('/api', (req, res) => {
     res.json({
-        msg: 'MedRecord API root. Try /login, /register, /profile, /users/...',
+        msg: 'MedRecord API root. Try /login, /register, /profile, /users...',
         available: [
             '/api/login', '/api/register', '/api/profile',
             '/api/users/doctors', '/api/clinical/prescriptions',
@@ -129,6 +156,19 @@ app.get('*', (req, res, next) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// Optional landing redirect: if an environment variable is set and
+// the request has no Authorization header we send the visitor out to the
+// external registration URL.  This works before the SPA is loaded and ensures
+// clicking the base link does not land on a dashboard by mistake.
+if (process.env.EXTERNAL_REGISTRATION_URL) {
+    app.get('/', (req, res, next) => {
+        if (!req.headers.authorization) {
+            return res.redirect(process.env.EXTERNAL_REGISTRATION_URL);
+        }
+        next();
+    });
+}
+
 // 4. Generic 404 handler for non-GET requests or fallthrough
 app.use((req, res) => {
     if (req.originalUrl.startsWith('/api') || req.method !== 'GET') {
@@ -142,13 +182,20 @@ app.use((req, res) => {
 // ────────────────────────────────────────────────
 app.use((err, req, res, next) => {
     console.error('SERVER ERROR:', err.stack);
-    res.status(500).json({ msg: 'Server error', details: err.message });
+    const response = { msg: 'Server error', details: err.message };
+    if (process.env.NODE_ENV !== 'production') {
+        response.developer = 'The server is running in testing/development mode.  Check logs for more details.';
+    }
+    res.status(500).json(response);
 });
 
 // Sync database then start server
 const User = require('./models/User');
 const Notification = require('./models/Notification');
 const FamilyMember = require('./models/FamilyMember');
+const Specialization = require('./models/Specialization');
+const DoctorRating = require('./models/DoctorRating');
+const PharmacySuggestion = require('./models/PharmacySuggestion');
 
 // Define relationships
 User.hasMany(FamilyMember, { foreignKey: 'userId', onDelete: 'CASCADE' });
@@ -165,7 +212,11 @@ sequelize.authenticate()
             console.log(`Connected to database (${dialect})`);
         }
         // Proceed to sync schema
-        return sequelize.sync({ alter: false });
+        // allow automatic schema alteration during development/testing so
+        // newly added columns (e.g. specializationCode) are created without
+        // a manual migration.  In production this remains false to avoid
+        // unwanted changes.
+        return sequelize.sync({ alter: process.env.NODE_ENV !== 'production' });
     })
     .then(() => {
         console.log('sequelize.sync() completed');
@@ -184,9 +235,9 @@ sequelize.authenticate()
             console.log('[SEED] Created test patient: 12345678901234 / test123');
         }
         // Seed a development test doctor account for quick login via temporary button
-        const existingTestDoc = await User.findOne({ where: { email: 'testdoctor@example.com' } });
-        if (!existingTestDoc) {
-            await User.create({
+        let testDoc = await User.findOne({ where: { email: 'testdoctor@example.com' } });
+        if (!testDoc) {
+            testDoc = await User.create({
                 id: '30000000000001', // valid 14-digit starting with 3
                 name: 'Test Doctor',
                 phone: '01099999999',
@@ -200,7 +251,60 @@ sequelize.authenticate()
                 verificationStatus: 'approved'
             });
             console.log('[SEED] Created test doctor: ID=30000000000001 phone=01099999999 / password123');
+        } else {
+            // make sure the record still matches the expected credentials/status
+            let updated = false;
+            if (testDoc.phone !== '01099999999') {
+                testDoc.phone = '01099999999';
+                updated = true;
+            }
+            if (testDoc.verificationStatus !== 'approved') {
+                testDoc.verificationStatus = 'approved';
+                updated = true;
+            }
+            if (updated) {
+                await testDoc.save();
+                console.log('[SEED] Updated existing test doctor to known credentials/approved status');
+            }
         }
+
+        // optional development data: add some sample pharmacies if none exist
+        // pharmacy seeding is only enabled in development **and** when
+        // USE_FAKE_PHARMACIES=true. This prevents dummy data from ever
+        // appearing unintentionally once we integrate a real service.
+        if (process.env.NODE_ENV !== 'production' && process.env.USE_FAKE_PHARMACIES === 'true') {
+            const Pharmacy = require('./models/Pharmacy');
+            const count = await Pharmacy.count();
+            if (count === 0) {
+                await Pharmacy.bulkCreate([
+                    { name: 'Central Pharmacy', address: '123 Main St', city: 'Cairo', latitude: 30.0444, longitude: 31.2357, phone: '0201234567' },
+                    { name: 'Eastside Pharmacy', address: '456 Nile Road', city: 'Cairo', latitude: 30.0520, longitude: 31.2330, phone: '0207654321' },
+                    { name: 'Giza Pharmacy', address: '789 Pyramid Ave', city: 'Giza', latitude: 30.0131, longitude: 31.2089, phone: '0205551234' }
+                ]);
+                console.log('[SEED] Inserted sample pharmacies for development');
+            }
+        }
+        // warn about testing-only configurations when running in production
+        if (process.env.NODE_ENV === 'production' && process.env.USE_FAKE_PHARMACIES === 'true') {
+            console.warn('[SECURITY] USE_FAKE_PHARMACIES is enabled in production! Disable before deployment.');
+        }
+        if (process.env.NODE_ENV === 'production' && process.env.AUTO_APPROVE_DOCTORS === 'true') {
+            console.warn('[SECURITY] AUTO_APPROVE_DOCTORS is enabled in production! This bypass should be removed.');
+        }
+        // allow automatic approval of all doctors when testing; set AUTO_APPROVE_DOCTORS=true
+        if (process.env.AUTO_APPROVE_DOCTORS === 'true') {
+            const User = require('./models/User');
+            const { Op } = require('sequelize');
+            const [updated] = await User.update({ verificationStatus: 'approved' }, {
+                where: { roles: { [Op.like]: '%doctor%' } }
+            });
+            console.log(`[SEED] AUTO_APPROVE_DOCTORS: ${updated} doctor(s) approved`);
+        }
+        // expose pharmacy proxy endpoint which calls an external service if
+        // PHARMACY_API_URL is configured. This allows real-world pharmacy data
+        // to be plugged in via environment without changing the frontend.
+        app.use('/api/pharmacy', require('./routes/pharmacy'));
+
 
         // start listening and keep a handle so we can catch errors
         // Only start listening when this file is the main module (prevents double-listen when imported)

@@ -2,7 +2,6 @@ const app = {
     user: null,
     lang: 'en',
     currentView: 'dashboard',  // Track current view for UI state
-    currentChatPartner: null,
     currentPatient: null,
     currentFamilyMemberId: null, // For family member editing
 
@@ -128,7 +127,7 @@ const app = {
             role_patient: "Patient", role_doctor: "Doctor", full_name: "Full Name",
             phone: "Phone Number", email: "Email", register_btn: "Register",
             has_account: "Already have an account?", login_link: "Login here",
-            nav_dashboard: "Dashboard", my_profile: "My Profile", nav_messages: "Messages",
+            nav_dashboard: "Dashboard", my_profile: "My Profile",
             nav_patients: "Patients", search_btn: "Search", search_patient_placeholder: "Enter Patient National ID...",
             search_doc_placeholder: "Enter Doctor Name...",
             select_doc_msg: "Select a doctor to message...",
@@ -139,10 +138,16 @@ const app = {
             send_prescription: "Send Prescription", no_prescriptions: "No prescriptions found.",
             prescribed_by: "Prescribed by Dr. ", patient_workspace: "Patient Workspace",
             prescriptions_upload: "Upload Medical File",
-            chat_title: "Messages", type_message: "Type a message...", send_msg: "Send",
-            no_messages: "No messages yet. Say hello!", select_chat_partner: "Select a patient to start chatting",
+            upload_sync_btn: "Upload & Sync",
+            get_directions: "Get Directions",
+            patient_status: "Medical Status",
             back_to_search: "Back to Search",
             approve: "Approve", reject: "Reject", apply_doctor: "Apply for Doctor Role", license_label: "Upload License/Cert (PDF/Image)",
+            status_active_verified: "Account Active & Verified",
+            records_synced_msg: "Your medical records are synchronized and up to date.",
+            medical_file_label: "Medical File (PDF or Image)",
+            no_medical_records: "No medical records found",
+            no_history: "No history.",
             switch_role: "Switch to", status_pending: "Pending", status_approved: "Approved", status_rejected: "Rejected",
             verify_title: "Verify Your Account", verify_desc: "A 4-digit code was sent to your phone/email. Enter it below:",
             verify_btn: "Verify", verify_error: "Invalid code. Please try again.", verify_success: "Account verified successfully!",
@@ -150,7 +155,6 @@ const app = {
             no_apt: "No appointments scheduled.", my_appointments: "My Appointments",
             notifications: "Notifications", no_notifs: "No new notifications",
             capture_rx: "Capture Prescription", capture: "Capture", cancel: "Cancel",
-            search_patient_placeholder: "Enter Patient ID...", search_doc_placeholder: "Find a Doctor..."
         },
         ar: {
             lang_name: "English", login_title: "مرحباً بعودتك", national_id: "الرقم القومي",
@@ -160,19 +164,20 @@ const app = {
             role_patient: "مريض", role_doctor: "طبيب", full_name: "الاسم الكامل",
             phone: "رقم الهاتف", email: "البريد الإلكتروني", register_btn: "تسجيل",
             has_account: "لديك حساب بالفعل؟", login_link: "سجل الدخول هنا",
-            nav_dashboard: "لوحة التحكم", my_profile: "ملفي الشخصي", nav_messages: "الرسائل",
+            nav_dashboard: "لوحة التحكم", my_profile: "ملفي الشخصي",
             nav_patients: "المرضى", search_btn: "بحث", search_patient_placeholder: "الرقم القومي للمريض...",
             search_doc_placeholder: "بحث عن طبيب...",
             select_doc_msg: "اختر طبيباً للمراسلة...",
             prescriptions_upload: "تحميل ملف طبي",
+            upload_sync_btn: "رفع ومزامنة",
+            get_directions: "احصل على الاتجاهات",
+            patient_status: "الحالة الطبية",
             personal_info: "المعلومات الشخصية", edit: "تعديل", save: "حفظ", cancel: "إلغاء",
             my_prescriptions: "الروشتات الطبية", doctor_welcome: "مرحباً بك، دكتور",
             doctor_instruct: "البحث عن مريض بالرقم القومي للبدء.",
             prescribe_new: "كتابة روشتة جديدة", medications: "الأدوية", notes: "ملاحظات الطبيب",
             send_prescription: "إرسال الروشتة", no_prescriptions: "لا توجد روشتات.",
             prescribed_by: "وصفها د. ", patient_workspace: "ملف المريض الحالي",
-            chat_title: "الرسائل", type_message: "اكتب رسالة...", send_msg: "إرسال",
-            no_messages: "لا توجد رسائل. ابدأ المحادثة!", select_chat_partner: "اختر مريضاً لبدء المحادثة",
             back_to_search: "العودة للبحث",
             admin_panel: "لوحة التحكم", pending_apps: "طلبات الأطباء", approve: "موافقة", 
             reject: "رفض", apply_doctor: "التقديم كطبيب", license_label: "تحميل الرخصة (PDF/صورة)",
@@ -334,6 +339,12 @@ const app = {
 
     profile: {
         triggerUpload() {
+            // Allow profile picture change only from the Profile view.
+            if (app.currentView !== 'profile') {
+                // In other views just display the full image if present.
+                if (app.user && app.user.profilePic) return window.open(app.user.profilePic, '_blank');
+                return app.ui.toast('Open Profile to change avatar', 'info');
+            }
             document.getElementById('profilePicInput').click();
         },
         async handleUpload(e) {
@@ -418,20 +429,67 @@ const app = {
     },
 
     auth: {
-        init() {
-            // Check if user has a valid token
+        async init() {
+            // load specializations list for the doctor dropdown
+            try {
+                const specs = await app.api('/specializations', 'GET');
+                const sel = document.getElementById('regSpecialization');
+                if (sel) {
+                    sel.innerHTML = '<option value="">Select specialization...</option>';
+                    specs.forEach(s => {
+                        const opt = document.createElement('option');
+                        opt.value = s.code || s.name;
+                        opt.textContent = s.name + (s.nameAr ? ` (${s.nameAr})` : '');
+                        sel.appendChild(opt);
+                    });
+                }
+            } catch (e) {
+                console.warn('Could not load specializations', e);
+            }
+
+            // fetch any runtime configuration (e.g. external landing page)
+            try {
+                const cfg = await app.api('/config', 'GET');
+                app.config = cfg || {};
+                // show developer/testing banner if appropriate
+                if (app.config.devMode) {
+                    // persistent banner at top of page
+                    const existing = document.getElementById('devModeBanner');
+                    if (!existing) {
+                        const banner = document.createElement('div');
+                        banner.id = 'devModeBanner';
+                        banner.style.cssText = 'background:#ffcc00;color:#000;padding:6px;text-align:center;font-weight:600;';
+                        banner.textContent = '⚠️ WARNING: Application running in DEVELOPMENT / TESTING MODE';
+                        document.body.insertBefore(banner, document.body.firstChild);
+                    }
+                }
+            } catch (e) {
+                app.config = {};
+            }
+
+            // Check if user has a valid token and verify it with the server
             const token = localStorage.getItem('mr_token');
-            
             if (token) {
-                // Token exists, try to load user profile
-                // For now, show app and let API handle token validation
-                // If token is invalid, logout will be triggered by 401 response
-                app.ui.showApp();
+                try {
+                    const fullProfile = await app.api('/users/profile', 'GET');
+                    // merge with any existing basic user data
+                    app.user = { ...app.user, ...fullProfile };
+                    app.ui.showApp();
+                } catch (err) {
+                    // token invalid or expired
+                    localStorage.removeItem('mr_token');
+                    app.ui.showLogin();
+                }
             } else {
-                // No token, show login/register page
+                // No token – redirect to configured external registration page if present
+                if (app.config && app.config.externalRegistrationUrl) {
+                    window.location.href = app.config.externalRegistrationUrl;
+                    return;
+                }
                 app.ui.showLogin();
             }
         },
+
 
         toggleDoctorFields() {
             const role = document.getElementById('regRole')?.value || '';
@@ -555,7 +613,9 @@ const app = {
             // ════════════════════════════════════════════════════════════════
 
             if (role === 'doctor') {
-                const specialization = document.getElementById('regSpecialization')?.value.trim() || '';
+                const selectEl = document.getElementById('regSpecialization');
+                const specialization = selectEl?.value ? selectEl.value.trim() : '';
+                const specialization_code = selectEl?.value ? selectEl.value.trim() : '';
                 const licenseFile = document.getElementById('regLicenseId')?.files?.[0];
                 const certificateFiles = document.getElementById('regCertificates')?.files;
 
@@ -612,7 +672,9 @@ const app = {
                     formData.append('gender', gender || '');
                     formData.append('city', city);
                     formData.append('governorate', govVal.value);
+                    // send selected value as both specialization (text) and code
                     formData.append('specialization', specialization);
+                    formData.append('specialization_code', specialization);
                     formData.append('licenseId', licenseFile);
                     
                     // Append all certificate files
@@ -620,7 +682,9 @@ const app = {
                         formData.append('certificates', cert);
                     }
 
-                    const res = await fetch('/api/auth/register-doctor', {
+                    // include role field so server knows this is a doctor
+                    formData.append('role', 'doctor');
+                    const res = await fetch('/api/register', {
                         method: 'POST',
                         body: formData
                     });
@@ -724,10 +788,12 @@ const app = {
         // NOTE: the login endpoint accepts national ID or phone only, so we use the
         // seeded doctor's ID here rather than an email address.
         async loginTestDoctor() {
-            // credentials correspond to a temporary test doctor account created by
-            // earlier development scripts. Using phone number because the login
-            // endpoint accepts phone or national ID only.
-            const creds = { loginId: '01010739431', password: 'password123' };
+            // credentials correspond to the seeded test doctor account.  We prefer
+            // the hard‑coded phone since the login endpoint doesn't accept email.
+            // This value is kept stable by the server seed so developers can hit the
+            // button repeatedly without worrying about random phones generated by
+            // earlier bypass scripts.
+            const creds = { loginId: '01099999999', password: 'password123' };
             try {
                 const res = await app.api('/login', 'POST', creds);
                 if (res && res.token && res.user) {
@@ -871,12 +937,19 @@ const app = {
             if (app.user.activeRole === 'patient') {
                 navHtml += `<a href="#" class="nav-item ${active === 'dashboard' ? 'active' : ''}" onclick="app.ui.showView('dashboard')"><i class="fa-solid fa-house"></i> <span data-i18n="nav_dashboard">${app.translations[app.lang].nav_dashboard}</span></a>`;
                 navHtml += `<a href="#" class="nav-item ${active === 'pharmacy' ? 'active' : ''}" onclick="app.ui.showView('pharmacy')"><i class="fa-solid fa-capsules"></i> <span data-i18n="nav_pharmacy">Pharmacies</span></a>`;
-                navHtml += `<a href="#" class="nav-item ${active === 'messages' ? 'active' : ''}" onclick="app.ui.showView('messages')"><i class="fa-solid fa-message"></i> <span data-i18n="nav_messages">${app.translations[app.lang].nav_messages}</span></a>`;
                 navHtml += `<a href="#" class="nav-item ${active === 'appointments' ? 'active' : ''}" onclick="app.ui.showView('appointments')"><i class="fa-solid fa-calendar-check"></i> <span data-i18n="nav_appointments">${app.translations[app.lang].nav_appointments}</span></a>`;
             } else if (app.user.activeRole === 'doctor') {
-                navHtml += `<a href="#" class="nav-item ${active === 'dashboard' ? 'active' : ''}" onclick="app.ui.showView('dashboard')"><i class="fa-solid fa-hospital-user"></i> <span data-i18n="nav_patients">${app.translations[app.lang].nav_patients}</span></a>`;
-                navHtml += `<a href="#" class="nav-item ${active === 'messages' ? 'active' : ''}" onclick="app.ui.showView('messages')"><i class="fa-solid fa-message"></i> <span data-i18n="nav_messages">${app.translations[app.lang].nav_messages}</span></a>`;
-                navHtml += `<a href="#" class="nav-item ${active === 'appointments' ? 'active' : ''}" onclick="app.ui.showView('appointments')"><i class="fa-solid fa-calendar-check"></i> <span data-i18n="nav_appointments">${app.translations[app.lang].nav_appointments}</span></a>`;
+                // if the doctor is not yet approved we limit the nav to the
+                // pending notice and profile/settings.  approved doctors see full
+                // menu.
+                const isApproved = app.user.verificationStatus === 'approved';
+                if (isApproved) {
+                    navHtml += `<a href="#" class="nav-item ${active === 'dashboard' ? 'active' : ''}" onclick="app.ui.showView('dashboard')"><i class="fa-solid fa-hospital-user"></i> <span data-i18n="nav_patients">${app.translations[app.lang].nav_patients}</span></a>`;
+                    navHtml += `<a href="#" class="nav-item ${active === 'messages' ? 'active' : ''}" onclick="app.ui.showView('messages')"><i class="fa-solid fa-message"></i> <span data-i18n="nav_messages">${app.translations[app.lang].nav_messages}</span></a>`;
+                    navHtml += `<a href="#" class="nav-item ${active === 'appointments' ? 'active' : ''}" onclick="app.ui.showView('appointments')"><i class="fa-solid fa-calendar-check"></i> <span data-i18n="nav_appointments">${app.translations[app.lang].nav_appointments}</span></a>`;
+                } else {
+                    navHtml += `<a href="#" class="nav-item ${active === 'doctorPending' ? 'active' : ''}" onclick="app.ui.showView('doctorPending')"><i class="fa-solid fa-hourglass-clock"></i> <span>Verification Pending</span></a>`;
+                }
             } else if (app.user.activeRole === 'admin') {
                 navHtml += `<a href="#" class="nav-item ${active === 'admin' ? 'active' : ''}" onclick="app.ui.showView('admin')"><i class="fa-solid fa-shield-halved"></i> <span data-i18n="admin_panel">Admin Panel</span></a>`;
             }
@@ -898,6 +971,24 @@ const app = {
         },
 
         showView(view) {
+            // guard against unauthorized access - if user is not set redirect to
+            // login page. this also prevents errors when other parts of the UI try
+            // to switch views before authentication.
+            if (!app.user) {
+                app.auth.logout();
+                return;
+            }
+
+            // prevent pending doctors from navigating away from the waiting screen
+            const userRoles = Array.isArray(app.user.roles) ? app.user.roles : [app.user.roles];
+            if (userRoles.includes('doctor') && app.user.verificationStatus !== 'approved') {
+                if (view !== 'doctorPending') {
+                    // the guard will re‑enter showView and stop recursion via return
+                    this.showView('doctorPending');
+                }
+                return;
+            }
+
             app.currentView = view;  // Track the current view
             document.querySelectorAll('.dashboard-content').forEach(c => c.classList.add('hidden'));
             const mainView = document.getElementById('mainView');
@@ -993,15 +1084,15 @@ const app = {
                         <div class="card-header"><h2 data-i18n="patient_status">Medical Status</h2></div>
                         <div class="status-indicator" style="display:flex; align-items:center; gap:15px; padding:10px 0;">
                             <div style="width:12px; height:12px; border-radius:50%; background:var(--success);"></div>
-                            <span style="font-weight:600;">Account Active & Verified</span>
+                            <span style="font-weight:600;">${app.translations[app.lang].status_active_verified || 'Account Active & Verified'}</span>
                         </div>
-                        <p class="text-muted" style="font-size:13px;">Your medical records are synchronized and up to date.</p>
+                        <p class="text-muted" style="font-size:13px;">${app.translations[app.lang].records_synced_msg || 'Your medical records are synchronized and up to date.'}</p>
                     </div>
                     
                     <div class="card stagger-3">
                         <div class="card-header"><h2 data-i18n="prescriptions_upload">Quick Upload</h2></div>
                         <div class="form-group">
-                            <label>Medical File (PDF or Image)</label>
+                            <label>${app.translations[app.lang].medical_file_label || 'Medical File (PDF or Image)'}</label>
                             <div style="display:flex; gap:10px;">
                                 <input type="file" id="patientFileRx" accept="image/*,.pdf" style="flex:1; padding:10px; font-size:12px;">
                                 <button class="btn secondary-btn small" onclick="app.ui.showCamera()">
@@ -1010,7 +1101,7 @@ const app = {
                             </div>
                         </div>
                         <button class="btn primary-btn full-width" onclick="app.patient.uploadPrescription()">
-                            <i class="fa-solid fa-upload"></i> Upload & Sync
+                            <i class="fa-solid fa-upload"></i> ${app.translations[app.lang].upload_sync_btn || 'Upload & Sync'}
                         </button>
                     </div>
                 </div>
@@ -1205,39 +1296,6 @@ const app = {
             } catch (err) {}
         },
 
-        async renderChatView() {
-            const partnerId = app.currentChatPartner;
-            if (!partnerId) {
-                const mainView = document.getElementById('mainView');
-                if (mainView) mainView.innerHTML = `<h2 class="center mt-5 text-muted" data-i18n="select_chat_partner">Select someone to chat with</h2>`;
-                app.i18n.apply();
-                return;
-            }
-
-            try {
-                const partner = await app.api(`/profile?id=${partnerId}`); 
-                const html = `
-                    <div class="card" style="height: calc(100vh - 150px); display:flex; flex-direction:column; padding:0; overflow:hidden;">
-                        <div class="card-header" style="padding: 15px 24px; background: white; margin:0;">
-                            <div style="display:flex; align-items:center; gap:12px;">
-                                <div class="avatar small" style="width:40px;height:40px;">${partner.profilePic ? `<img src="${partner.profilePic}">` : partner.name.charAt(0)}</div>
-                                <h2 style="font-size:18px;">${partner.name}</h2>
-                            </div>
-                            <button class="btn text-btn" onclick="app.user.activeRole === 'doctor' ? app.ui.renderDoctorWorkspace() : app.ui.renderPatientDashboard()"><i class="fa-solid fa-arrow-left"></i> Back</button>
-                        </div>
-                        <div id="chatMessages" style="flex:1; overflow-y:auto; padding: 24px; background: #f8fafc; display:flex; flex-direction:column; gap:12px;"></div>
-                        <div style="padding: 20px 24px; background: white; border-top: 1px solid var(--border); display:flex; gap:12px; align-items:center;">
-                            <input type="text" id="chatInput" placeholder="${app.translations[app.lang].type_message}" style="flex:1; padding:12px 20px; border-radius:25px; border:1px solid var(--border); background:var(--bg-main); outline:none;">
-                            <button class="btn primary-btn" style="width:45px; height:45px; border-radius:50%; padding:0;" onclick="app.chat.send()"><i class="fa-solid fa-paper-plane"></i></button>
-                        </div>
-                    </div>
-                `;
-                const mainView = document.getElementById('mainView');
-                if (mainView) mainView.innerHTML = html;
-                app.chat.loadMessages();
-                app.i18n.apply();
-            } catch (err) {}
-        },
 
         toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
@@ -1352,7 +1410,7 @@ const app = {
                 
                 <!-- Preferences Card -->
                 <div class="content-grid" style="max-width: 800px;">
-                    <div class="card stagger-1">
+                        <div class="card stagger-1">
                         <div class="card-header"><h2>Preferences</h2></div>
                         <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0;">
                             <div><strong>Language / اللغة</strong></div>
@@ -1492,7 +1550,6 @@ const app = {
             const html = `
                 <div class="content-header" style="flex-wrap: wrap; gap: 15px;">
                     <h1 class="page-title m-0">Patient: ${p.name}</h1>
-                    <button class="btn primary-btn" onclick="app.currentChatPartner='${p.id}'; app.ui.renderChatView();">Message Patient</button>
                 </div>
                 <div class="dashboard-widgets">
                     <div class="card stagger-1">
@@ -1509,8 +1566,12 @@ const app = {
                         <button class="btn primary-btn full-width mt-3" onclick="app.doctor.prescribe()">Send Prescription</button>
                     </div>
                     <div class="card stagger-2">
-                        <div class="card-header"><h2>History</h2></div>
+                        <div class="card-header"><h2>Prescriptions History</h2></div>
                         <div id="doctorPrescriptionsList"></div>
+                    </div>
+                    <div class="card stagger-3">
+                        <div class="card-header"><h2>Shared Documents</h2></div>
+                        <div id="doctorDocumentsList"></div>
                     </div>
                 </div>
             `;
@@ -1591,29 +1652,61 @@ const app = {
             try {
                 const rx = await app.api(`/clinical/prescriptions/${rxId}`);
                 const { jsPDF } = window.jspdf;
-                const doc = new jsPDF();
-                
-                doc.setFontSize(22);
-                doc.text("MedRecord Prescription", 20, 20);
+                const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+
+                const leftX = 40;
+                const rightX = 350;
+                const topY = 60;
+
+                // Doctor info (top left)
                 doc.setFontSize(12);
-                doc.text(`Patient: ${app.user && app.user.name ? app.user.name : 'Unknown'} `, 20, 40);
-                doc.text(`Doctor: ${rx.doctorId?.name || 'System'}`, 20, 50);
-                doc.text(`Date: ${new Date(rx.date).toLocaleDateString()}`, 20, 60);
-                doc.line(20, 65, 190, 65);
-                
-                doc.setFontSize(16);
-                doc.text("Medications:", 20, 80);
+                doc.text(`Dr. ${rx.doctorName || ''}`, leftX, topY);
+                if (rx.doctorPhone) doc.text(`Phone: ${rx.doctorPhone}`, leftX, topY + 16);
+                if (rx.doctorAddress) doc.text(`${rx.doctorAddress}`, leftX, topY + 32);
+
+                // Patient info (top right)
+                const patientName = rx.patientName || (app.user && app.user.name ? app.user.name : 'Patient');
+                const patientPhone = rx.patientPhone || '';
+                doc.text(`Patient: ${patientName}`, rightX, topY);
+                if (patientPhone) doc.text(`Phone: ${patientPhone}`, rightX, topY + 16);
+
+                // Date
+                doc.setFontSize(10);
+                doc.text(`Date: ${new Date(rx.date).toLocaleString()}`, leftX, topY + 64);
+                doc.line(leftX, topY + 72, 555, topY + 72);
+
+                // Medications
+                doc.setFontSize(14);
+                doc.text('Medications:', leftX, topY + 100);
                 doc.setFontSize(12);
-                doc.text(rx.medications, 30, 90);
-                
-                doc.setFontSize(16);
-                doc.text("Notes:", 20, 110);
-                doc.setFontSize(12);
-                doc.text(rx.notes, 30, 120);
-                
+                const meds = rx.medications || '(no medications)';
+                doc.text(meds, leftX, topY + 120, { maxWidth: 520 });
+
+                // Notes
+                if (rx.notes) {
+                    doc.setFontSize(12);
+                    doc.text('Notes:', leftX, topY + 200);
+                    doc.setFontSize(11);
+                    doc.text(rx.notes, leftX, topY + 220, { maxWidth: 520 });
+                }
+
                 doc.save(`Prescription_${rxId}.pdf`);
             } catch (err) {
                 app.ui.toast("PDF Export failed", "error");
+            }
+        },
+        async uploadPrescription() {
+            const fileInput = document.getElementById('patientFileRx');
+            if (!fileInput || !fileInput.files.length) return app.ui.toast("Select a file to upload", "error");
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            try {
+                const rx = await app.apiUpload('/clinical/patient/upload', formData);
+                app.ui.toast("File uploaded", "success");
+                this.loadPrescriptions();
+                fileInput.value = '';
+            } catch (err) {
+                app.ui.toast("Upload failed", "error");
             }
         },
         async loadPrescriptions() {
@@ -1622,7 +1715,7 @@ const app = {
                 const container = document.getElementById('patientPrescriptionsList');
                 if (!container) return;
                 if (prescriptions.length === 0) {
-                    container.innerHTML = '<p class="text-muted">No medical records found</p>';
+                    container.innerHTML = `<p class="text-muted">${app.translations[app.lang].no_medical_records || 'No medical records found'}</p>`;
                     return;
                 }
                 container.innerHTML = prescriptions.reverse().map(rx => `
@@ -1660,6 +1753,14 @@ const app = {
             }
         },
         async prescribe() {
+            // ensure the doctor's account has been approved before submitting
+            // allow bypass in devMode or when backend auto-approves doctors
+            const bypass = (app.config && (app.config.devMode || app.config.autoApproveDoctors));
+            if (app.user.verificationStatus !== 'approved' && !bypass) {
+                app.ui.toast('Your doctor account is not approved yet.', 'error');
+                return;
+            }
+
             const meds = document.getElementById('rxMeds').value;
             const notes = document.getElementById('rxNotes').value;
             const fileInput = document.getElementById('doctorRxFile');
@@ -1674,58 +1775,120 @@ const app = {
                 } catch (err) { return; }
             }
             try {
-                await app.api('/clinical/prescribe', 'POST', { patientId: app.currentPatient.id, medications: meds, notes, fileUrl });
-                app.ui.toast("Sent", "success");
+                const resp = await app.api('/clinical/prescribe', 'POST', { patientId: app.currentPatient.id, medications: meds, notes, fileUrl });
+                app.ui.toast(resp.msg || "Prescription sent successfully.", "success");
                 this.loadPrescriptions();
-            } catch (err) {}
+            } catch (err) {
+                // if server returns authorization errors, show message
+                if (err.message) app.ui.toast(err.message, 'error');
+            }
         },
+
         async loadPrescriptions() {
             if (!app.currentPatient) return;
             try {
                 const list = await app.api(`/clinical/prescriptions?patientId=${app.currentPatient.id}`);
-                const container = document.getElementById('doctorPrescriptionsList');
-                if (container) {
-                    container.innerHTML = list.length === 0 ? '<p>No history.</p>' : list.reverse().map(rx => `
-                        <div class="card mb-2">
-                            <strong>${rx.medications}</strong><br><small>${new Date(rx.date).toLocaleDateString()}</small>
-                            ${rx.fileUrl ? `<br><a href="${rx.fileUrl}" target="_blank">Attachment</a>` : ''}
-                        </div>
-                    `).join('');
+                // categorize entries
+                const prescriptions = list.filter(r => r.category === 'prescription');
+                const documents = list.filter(r => r.category !== 'prescription');
+
+                const presContainer = document.getElementById('doctorPrescriptionsList');
+                const docContainer = document.getElementById('doctorDocumentsList');
+
+                if (presContainer) {
+                    presContainer.innerHTML = prescriptions.length === 0
+                        ? `<p>${app.translations[app.lang].no_history || 'No history.'}</p>`
+                        : prescriptions.reverse().map(rx => `
+                            <div class="card mb-2">
+                                <strong>${rx.medications || '(no medications)'}</strong><br><small>${new Date(rx.date).toLocaleDateString()}</small>
+                                ${rx.fileUrl ? `<br><a href="${rx.fileUrl}" target="_blank">Attachment</a>` : ''}
+                            </div>
+                        `).join('');
+                }
+
+                if (docContainer) {
+                    docContainer.innerHTML = documents.length === 0
+                        ? `<p>${app.translations[app.lang].no_history || 'No history.'}</p>`
+                        : documents.reverse().map(rx => `
+                            <div class="card mb-2">
+                                <small>${new Date(rx.date).toLocaleDateString()}</small>
+                                ${rx.notes ? `<p>${rx.notes}</p>` : ''}
+                                ${rx.fileUrl ? `<a href="${rx.fileUrl}" target="_blank">View Document</a>` : ''}
+                            </div>
+                        `).join('');
                 }
             } catch (err) {}
         }
     },
 
-    chat: {
-        async loadMessages() {
-            const container = document.getElementById('chatMessages');
-            if (!container || !app.currentChatPartner) return;
+    // Simple messaging UI / client helper to ensure conversations are fetched
+    // correctly and refreshed automatically when open.
+    messaging: {
+        currentPartner: null,
+        refreshHandle: null,
+        renderView() {
+            const main = document.getElementById('mainView');
+            if (!main) return;
+            const partnerPrefill = app.currentPatient ? app.currentPatient.id : '';
+            main.innerHTML = `
+                <div class="content-header"><h1 class="page-title">Messages</h1></div>
+                <div style="max-width:800px;margin:0 auto;">
+                    <div style="display:flex;gap:8px;margin-bottom:8px;">
+                        <input id="msgPartnerId" placeholder="Partner ID" value="${partnerPrefill}" style="flex:1;padding:8px;">
+                        <button class="btn primary-btn" onclick="app.messaging.openConversation(document.getElementById('msgPartnerId').value)">Open</button>
+                    </div>
+                    <div id="messagesContainer" style="min-height:300px;border:1px solid var(--border);padding:10px;overflow:auto;background:var(--bg);"></div>
+                    <div style="display:flex;gap:8px;margin-top:8px;">
+                        <input id="msgText" placeholder="Write a message..." style="flex:1;padding:8px;">
+                        <button class="btn primary-btn" onclick="app.messaging.send()">Send</button>
+                    </div>
+                </div>
+            `;
+        },
+        async openConversation(partnerId) {
+            if (!partnerId) return app.ui.toast('Enter partner id', 'error');
+            this.currentPartner = String(partnerId);
+            await this.loadConversation();
+            this.startAutoRefresh();
+        },
+        async loadConversation() {
+            if (!this.currentPartner) return;
             try {
-                const msgs = await app.api(`/messages/${app.currentChatPartner}`);
-                container.innerHTML = msgs.length === 0 ? `<p class="center text-muted">${app.translations[app.lang].no_messages}</p>` : msgs.map(m => {
-                    const me = m.senderId === app.user.id;
-                    return `
-                        <div class="message-wrapper ${me ? 'me' : 'them'}">
-                            <div class="message-bubble">
-                                ${m.content}
-                                <div class="message-time">${new Date(m.createdAt || m.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
+                const msgs = await app.api(`/messages/${this.currentPartner}`);
+                const container = document.getElementById('messagesContainer');
+                if (!container) return;
+                container.innerHTML = msgs.map(m => `
+                    <div style="margin-bottom:8px;">
+                        <div style="font-size:12px;color:var(--text-muted);">${m.senderId === app.user.id ? 'You' : 'Partner'} • ${new Date(m.date).toLocaleString()}</div>
+                        <div style="padding:8px;border-radius:6px;background:${m.senderId === app.user.id ? '#e6f7ff' : '#f4f4f4'};">${m.content}</div>
+                    </div>
+                `).join('');
                 container.scrollTop = container.scrollHeight;
-            } catch (err) {}
+            } catch (err) {
+                console.error('Failed to load conversation', err);
+            }
         },
         async send() {
-            const input = document.getElementById('chatInput');
-            if (!input?.value.trim()) return;
+            const txt = document.getElementById('msgText')?.value;
+            if (!txt || !this.currentPartner) return app.ui.toast('Open a conversation and enter a message', 'error');
             try {
-                await app.api('/messages', 'POST', { receiverId: app.currentChatPartner, content: input.value.trim() });
-                input.value = '';
-                this.loadMessages();
-            } catch (err) {}
+                await app.api('/messages', 'POST', { receiverId: this.currentPartner, content: txt });
+                document.getElementById('msgText').value = '';
+                await this.loadConversation();
+            } catch (err) {
+                app.ui.toast('Send failed', 'error');
+            }
+        },
+        startAutoRefresh() {
+            this.stopAutoRefresh();
+            this.refreshHandle = setInterval(() => this.loadConversation(), 4000);
+        },
+        stopAutoRefresh() {
+            if (this.refreshHandle) clearInterval(this.refreshHandle);
+            this.refreshHandle = null;
         }
     },
+
 
     pharmacy: {
         async renderSearch() {
@@ -1733,7 +1896,14 @@ const app = {
             if (!container) return;
             
             try {
-                const pharmacies = await app.api('/pharmacies', 'GET');
+                let pharmacies;
+                try {
+                    const pos = await app.geo.getPosition();
+                    pharmacies = await app.api(`/users/pharmacies/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}`, 'GET');
+                } catch (_) {
+                    pharmacies = await app.api('/users/pharmacies', 'GET');
+                }
+
                 let html = `
                     <div class="search-box" style="padding: 20px;">
                         <h3>${app.translations[app.lang].nav_pharmacy || 'Pharmacies'}</h3>
@@ -1756,7 +1926,14 @@ const app = {
         async searchPharmacies() {
             const query = document.getElementById('pharmacySearch')?.value || '';
             try {
-                const pharmacies = await app.api('/pharmacies', 'GET');
+                let pharmacies;
+                try {
+                    const pos = await app.geo.getPosition();
+                    pharmacies = await app.api(`/users/pharmacies/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}`, 'GET');
+                } catch (err) {
+                    pharmacies = await app.api('/users/pharmacies', 'GET');
+                }
+
                 const filtered = pharmacies.filter(p => 
                     p.name.toLowerCase().includes(query.toLowerCase()) ||
                     p.address.toLowerCase().includes(query.toLowerCase()) ||
@@ -1772,18 +1949,19 @@ const app = {
             if (!list) return;
             
             if (pharmacies.length === 0) {
-                list.innerHTML = `<p class="text-muted">${app.translations[app.lang].no_pharmacies || 'No pharmacies found'}</p>`;
+                const msg = app.translations[app.lang].no_pharmacies || 'No pharmacies found';
+                list.innerHTML = `<p class="text-muted">${msg}</p>`;
                 return;
             }
             
             list.innerHTML = pharmacies.map(p => `
                 <div class="card mb-2" style="padding: 15px;">
-                    <h4>${p.name}</h4>
+                    <h4>${p.name}${p.distance ? ` - ${p.distance} km` : ''}</h4>
                     <p><i class="fa-solid fa-map-marker-alt"></i> ${p.address}</p>
                     <p><i class="fa-solid fa-phone"></i> <a href="tel:${p.phone}">${p.phone}</a></p>
                     <p><i class="fa-solid fa-city"></i> ${p.city}</p>
                     <button onclick="window.open('https://maps.google.com/maps/search/${encodeURIComponent(p.name + ' ' + p.address)}')" class="btn secondary-btn" style="width: 100%;">
-                        <i class="fa-solid fa-directions"></i> Get Directions
+                        <i class="fa-solid fa-directions"></i> ${app.translations[app.lang].get_directions || 'Get Directions'}
                     </button>
                 </div>
             `).join('');
@@ -1791,6 +1969,9 @@ const app = {
     },
 
     i18n: {
+        // expose translation keys for pharmacy settings if needed
+        // (no changes here yet)
+
         init() {
             const saved = localStorage.getItem('mr_lang');
             if (saved) app.lang = saved;

@@ -86,7 +86,9 @@
                 <div id="doctorFields" class="doctor-fields hidden">
                     <div class="form-group">
                         <label>Medical Specialization *</label>
-                        <input type="text" id="regSpecialization" placeholder="e.g., Cardiology, Neurology">
+                        <select id="regSpecialization" class="form-select" required>
+                            <option value="">Loading specializations...</option>
+                        </select>
                     </div>
                     <div class="form-group">
                         <label>Medical License ID (PDF/Image) *</label>

@@ -26,6 +26,18 @@ npm install
 
 ### 2. Start the Server
 
+Before launching, review environment variables -- a sample `.env.example` is
+present with descriptions.  Key configuration options include:
+
+- `JWT_SECRET` – secret used for signing JWT tokens (must be set in prod).
+- `PHARMACY_API_URL` – base URL of an external pharmacy service (optional).
+- `AUTO_APPROVE_DOCTORS` – when `true` all doctor accounts are marked
+  `approved`; useful during development.  **Disable before production.**
+- `USE_FAKE_PHARMACIES` – seeds dummy pharmacy records when development
+  environment; ignored in production.
+- `EXTERNAL_REGISTRATION_URL` – if provided, unauthenticated visitors will be
+  redirected here instead of seeing the local login page.
+
 ```bash
 npm start
 ```
