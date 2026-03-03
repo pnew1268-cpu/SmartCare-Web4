@@ -1,4 +1,9 @@
-const app = {
+// ensure global namespace is available before any code runs (protects against double load)
+window.app = window.app || {};
+// patient sub-object may be referenced early by inline handlers
+window.app.patient = window.app.patient || {};
+
+window.app = {
     user: null,
     lang: 'en',
     currentView: 'dashboard',  // Track current view for UI state
@@ -114,9 +119,25 @@ const app = {
                 return { valid: false, message: 'Invalid governorate' };
             }
             return { valid: true, value };
+        },
+
+        relationship(value) {
+            const validRels = ['spouse', 'son', 'daughter', 'parent', 'sibling', 'dependent', 'other'];
+            if (!validRels.includes(String(value).toLowerCase())) {
+                return { valid: false, message: 'Invalid relationship' };
+            }
+            return { valid: true, value: String(value).toLowerCase() };
         }
     },
     
+    // -----------------------------------------------------------------------
+    // helper used across doctor workspace when patient object comes back from API
+    // -----------------------------------------------------------------------
+    renderPatientData: function(patient) {
+        if (!patient) return;
+        document.getElementById("patientName").innerText = patient.name || "";
+        document.getElementById("patientPhone").innerText = patient.phone || "";
+    },
 
     translations: {
         en: {
@@ -128,6 +149,7 @@ const app = {
             phone: "Phone Number", email: "Email", register_btn: "Register",
             has_account: "Already have an account?", login_link: "Login here",
             nav_dashboard: "Dashboard", my_profile: "My Profile",
+            nav_messages: "Messages",
             nav_patients: "Patients", search_btn: "Search", search_patient_placeholder: "Enter Patient National ID...",
             search_doc_placeholder: "Enter Doctor Name...",
             select_doc_msg: "Select a doctor to message...",
@@ -155,6 +177,7 @@ const app = {
             no_apt: "No appointments scheduled.", my_appointments: "My Appointments",
             notifications: "Notifications", no_notifs: "No new notifications",
             capture_rx: "Capture Prescription", capture: "Capture", cancel: "Cancel",
+            activate_pharmacy: "Activate real pharmacy service",
         },
         ar: {
             lang_name: "English", login_title: "مرحباً بعودتك", national_id: "الرقم القومي",
@@ -165,6 +188,7 @@ const app = {
             phone: "رقم الهاتف", email: "البريد الإلكتروني", register_btn: "تسجيل",
             has_account: "لديك حساب بالفعل؟", login_link: "سجل الدخول هنا",
             nav_dashboard: "لوحة التحكم", my_profile: "ملفي الشخصي",
+            nav_messages: "الرسائل",
             nav_patients: "المرضى", search_btn: "بحث", search_patient_placeholder: "الرقم القومي للمريض...",
             search_doc_placeholder: "بحث عن طبيب...",
             select_doc_msg: "اختر طبيباً للمراسلة...",
@@ -191,7 +215,8 @@ const app = {
             city: "المدينة", governorate: "المحافظة",
             search_pharmacy_placeholder: "البحث عن صيدليات...",
             pharmacy_name: "اسم الصيدلية", pharmacy_address: "العنوان", pharmacy_phone: "الهاتف",
-            pharmacy_distance: "المسافة", no_pharmacies: "لا توجد صيدليات."
+            pharmacy_distance: "المسافة", no_pharmacies: "لا توجد صيدليات.",
+            activate_pharmacy: "تفعيل خدمة الصيدلية الحقيقية"
         }
     },
 
@@ -207,67 +232,80 @@ const app = {
         }
     },
     
-    api: async (endpoint, method = 'GET', body = null) => {
-        const token = localStorage.getItem('mr_token');
-        const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-
-        // Handle absolute vs relative URLs (for local file display support)
+    api: async function (endpoint, method = "GET", body = null) {
+        // build full URL similarly to apiUpload to avoid forgetting `/api`
+        // determine the API base url; keep relative by default
         let baseUrl = '/api';
         if (window.location.protocol === 'file:') {
             baseUrl = 'http://127.0.0.1:3000/api';
         } else if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            if (window.location.port !== '3000') baseUrl = `http://${window.location.hostname}:3000/api`;
+            if (window.location.port && window.location.port !== '3000') {
+                baseUrl = `http://${window.location.hostname}:3000/api`;
+            }
         } else if (window.location.port && window.location.port !== '3000') {
             baseUrl = `${window.location.protocol}//${window.location.hostname}:3000/api`;
         }
-        
-        const targetUrl = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
-        
-        console.log(`[API] ${method} ${targetUrl}`, body);
+        // build final URL; avoid duplicating "/api" if already present
+        let url;
+        if (endpoint.startsWith('http')) {
+            url = endpoint;
+        } else if (endpoint.startsWith('/api')) {
+            url = endpoint; // already contains api prefix
+        } else {
+            url = `${baseUrl}${endpoint}`;
+        }
 
-        const options = { method, headers };
-        if (body && method !== 'GET') options.body = JSON.stringify(body);
-
-
+        const token = localStorage.getItem("token");
+        const headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        };
+        if (token) {
+            headers["Authorization"] = "Bearer " + token;
+        }
         try {
-            const response = await fetch(targetUrl, options);
-            const contentType = response.headers.get("content-type");
-            
-            let data;
-            if (contentType && contentType.indexOf("application/json") !== -1) {
-                data = await response.json();
-            } else {
-                const text = await response.text();
-                console.error('[API] Non-JSON Response received:', text.substring(0, 200));
-                throw new Error(`Server returned non-JSON response (${response.status}). Check backend status.`);
+            const options = { method, headers };
+            if (body && method !== "GET") {
+                options.body = JSON.stringify(body);
             }
-            
+            const response = await fetch(url, options);
+            if (response.status === 401 || response.status === 403) {
+                console.error(`API returned ${response.status}. Clearing auth.`);
+                localStorage.clear();
+                app.ui.showLogin();
+                return null;
+            }
             if (!response.ok) {
-                if (response.status === 401) {
-                    localStorage.removeItem('mr_token');
-                    if (!endpoint.includes('/auth/login')) app.auth.logout();
-                }
-                const errorMsg = data.msg || data.message || data.error || 'API Request failed';
-                console.warn(`[API] Error ${response.status}:`, errorMsg);
+                const text = await response.text();
+                console.error(`API Error ${response.status}:`, text);
+                let errorMsg = `HTTP ${response.status}`;
+                try {
+                    const errorData = JSON.parse(text);
+                    if (errorData.msg) {
+                        errorMsg = errorData.msg;
+                    }
+                } catch (e) { /* ignore */ }
                 throw new Error(errorMsg);
             }
+            const data = await response.json();
             return data;
-        } catch (err) {
-            console.error('[API] Fetch Error:', err);
-            const msg = err.name === 'SyntaxError' ? 'Server returned invalid JSON. Check backend logs.' : (err.name === 'TypeError' && err.message === 'Failed to fetch' 
-                ? 'Could not connect to server. Ensure backend is running.' 
-                : err.message);
-            app.ui.toast(msg, 'error');
-            throw err;
+        } catch (error) {
+            console.error("API Error:", error);
+            throw error;  // Re-throw so caller can handle it
         }
     },
 
 
     apiUpload: async (endpoint, formData) => {
-        const token = localStorage.getItem('mr_token');
+        // Accept either legacy `token` key or current `mr_token`
+        const token = localStorage.getItem('mr_token') || localStorage.getItem('token');
         const headers = {};
-        if (token) headers['Authorization'] = `Bearer ${token}`;
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+            console.debug('[API_UPLOAD] Attaching Authorization header');
+        } else {
+            console.debug('[API_UPLOAD] No token found in localStorage');
+        }
 
         let baseUrl = '/api';
         if (window.location.protocol === 'file:') baseUrl = 'http://127.0.0.1:3000/api';
@@ -299,7 +337,7 @@ const app = {
         list: [],
         async load() {
             try {
-                const data = await app.api('/notifications');
+                const data = await app.api('/api/notifications');
                 this.list = data;
                 this.updateUI();
             } catch (err) {}
@@ -322,12 +360,45 @@ const app = {
                 return;
             }
 
-            listContainer.innerHTML = this.list.map(n => `
-                <div class="notif-item ${n.isRead ? '' : 'unread'}" onclick="app.notifications.markRead('${n.id || n._id}')">
+            listContainer.innerHTML = this.list.map(n => {
+                let extra = '';
+                // If notification includes a partner id (patient or sender) show chat button
+                const partnerId = (n.meta && (n.meta.patientId || n.meta.senderId)) || null;
+                if (partnerId) {
+                    extra = `<button class="btn secondary-btn small" onclick="event.stopPropagation(); app.notifications.markRead('${n.id || n._id}'); app.ui.showView('messages'); app.messaging.openConversation('${partnerId}')">Chat</button>`;
+                }
+                return `
+                <div class="notif-item ${n.isRead ? '' : 'unread'}" data-index="${this.list.indexOf(n)}">
                     <div style="font-size:12px; font-weight:600;">${n.message}</div>
                     <div style="font-size:10px; color:var(--text-muted); margin-top:4px;">${new Date(n.createdAt || n.date).toLocaleString()}</div>
+                    ${extra}
                 </div>
-            `).join('');
+            `;
+            }).join('');
+            // attach click handlers to support inline expansion
+            listContainer.querySelectorAll('.notif-item').forEach(el => {
+                el.addEventListener('click', async (evt) => {
+                    const idx = el.getAttribute('data-index');
+                    if (idx === null) return;
+                    const n = this.list[idx];
+                    // mark read
+                    await app.notifications.markRead(n.id || n._id);
+                    // if it's a message notification, fetch conversation and show below
+                    if (n.type === 'message' && n.meta && n.meta.senderId) {
+                        // prevent duplicate panels
+                        if (el.querySelector('.notif-conversation')) return;
+                        try {
+                            const msgs = await app.api(`/messages/${n.meta.senderId}`);
+                            const convHtml = `<div class="notif-conversation" style="border:1px solid var(--border); padding:8px; margin-top:4px; background:var(--bg);">
+                                ${msgs.map(m => `<div style="margin-bottom:4px;"><strong>${m.senderId === app.user.id ? 'You' : 'Doctor'}:</strong> ${m.content}</div>`).join('')}
+                            </div>`;
+                            el.insertAdjacentHTML('beforeend', convHtml);
+                        } catch (err) {
+                            console.error('Failed to load conversation for notification', err);
+                        }
+                    }
+                });
+            });
         },
         async markRead(id) {
             try {
@@ -360,7 +431,7 @@ const app = {
 
             try {
                 const data = await app.apiUpload('/users/upload', formData);
-                await app.api('/users/profile', 'PUT', { profilePic: data.url });
+                await app.api('/api/users/profile', 'PUT', { profilePic: data.url });
                 app.user.profilePic = data.url;
                 app.profile.updateDisplay();
                 app.ui.toast("Avatar updated", "success");
@@ -382,20 +453,28 @@ const app = {
             });
         },
         async saveGeneralSettings() {
-            const email = document.getElementById('profEmail').value;
-            const city = document.getElementById('profCity').value;
+            const name = document.getElementById('profName')?.value;
+            const phone = document.getElementById('profPhone')?.value;
+            const email = document.getElementById('profEmail')?.value;
+            const city = document.getElementById('profCity')?.value;
             try {
-                const updated = await app.api('/profile', 'PUT', { email, city });
+                const payload = { name, phone, email, city };
+                // include clinic address when present in form
+                const clinic = document.getElementById('profClinic')?.value;
+                if (clinic !== undefined) payload.clinicAddress = clinic;
+
+                const updated = await app.api('/api/users/profile', 'PUT', payload);
                 app.user = updated;
-                app.ui.toast("Profile updated", "success");
-            } catch (err) { app.ui.toast("Failed to save", "error"); }
+                app.ui.toast("Profile updated successfully.", "success");
+                app.ui.renderProfile();
+            } catch (err) { app.ui.toast(err.message || "Failed to save", "error"); }
         },
         async saveDocSettings() {
             const specialization = document.getElementById('profSpecialization').value;
             const clinicAddress = document.getElementById('profClinic').value;
             const contactInfo = document.getElementById('profContact').value;
             try {
-                const updated = await app.api('/profile', 'PUT', { specialization, clinicAddress, contactInfo });
+                const updated = await app.api('/api/profile', 'PUT', { specialization, clinicAddress, contactInfo });
                 app.user = updated;
                 app.ui.toast("Professional info updated", "success");
             } catch (err) { app.ui.toast("Failed to save", "error"); }
@@ -421,7 +500,7 @@ const app = {
                     updates.certificatesUrls = [data.url];
                 }
                 
-                await app.api('/profile', 'PUT', updates);
+                await app.api('/api/profile', 'PUT', updates);
                 app.ui.toast("Documents synced", "success");
                 app.ui.renderProfile();
             } catch (err) { }
@@ -429,23 +508,14 @@ const app = {
     },
 
     auth: {
+        // helper getters previously in authManager.js
+        getToken() { return localStorage.getItem("token"); },
+        getRole() { return localStorage.getItem("userRole"); },
+        isDoctor() { return this.getRole() === "doctor"; },
+        isLoggedIn() { return !!this.getToken(); },
+
         async init() {
-            // load specializations list for the doctor dropdown
-            try {
-                const specs = await app.api('/specializations', 'GET');
-                const sel = document.getElementById('regSpecialization');
-                if (sel) {
-                    sel.innerHTML = '<option value="">Select specialization...</option>';
-                    specs.forEach(s => {
-                        const opt = document.createElement('option');
-                        opt.value = s.code || s.name;
-                        opt.textContent = s.name + (s.nameAr ? ` (${s.nameAr})` : '');
-                        sel.appendChild(opt);
-                    });
-                }
-            } catch (e) {
-                console.warn('Could not load specializations', e);
-            }
+            // specializations are initialized on DOMContentLoaded via app.specializations.init()
 
             // fetch any runtime configuration (e.g. external landing page)
             try {
@@ -471,7 +541,7 @@ const app = {
             const token = localStorage.getItem('mr_token');
             if (token) {
                 try {
-                    const fullProfile = await app.api('/users/profile', 'GET');
+                    const fullProfile = await app.api('/api/users/profile', 'GET');
                     // merge with any existing basic user data
                     app.user = { ...app.user, ...fullProfile };
                     app.ui.showApp();
@@ -530,21 +600,21 @@ const app = {
             const idVal = app.validators.nationalId(id);
             if (!idVal.valid) {
                 app.ui.toast(idVal.message, 'error');
-                return;
+                return false;
             }
 
             // Name
             const nameVal = app.validators.name(name, 'Full name');
             if (!nameVal.valid) {
                 app.ui.toast(nameVal.message, 'error');
-                return;
+                return false;
             }
 
             // Phone
             const phoneVal = app.validators.phoneNumber(phone);
             if (!phoneVal.valid) {
                 app.ui.toast(phoneVal.message, 'error');
-                return;
+                return false;
             }
 
             // Email (if provided)
@@ -552,7 +622,7 @@ const app = {
                 const emailVal = app.validators.email(email);
                 if (!emailVal.valid) {
                     app.ui.toast(emailVal.message, 'error');
-                    return;
+                    return false;
                 }
             }
 
@@ -560,7 +630,7 @@ const app = {
             const passVal = app.validators.password(password);
             if (!passVal.valid) {
                 app.ui.toast(passVal.message, 'error');
-                return;
+                return false;
             }
 
             // Age or DOB (at least one required)
@@ -571,19 +641,19 @@ const app = {
                 const ageVal = app.validators.age(age);
                 if (!ageVal.valid) {
                     app.ui.toast(ageVal.message, 'error');
-                    return;
+                    return false;
                 }
                 selectedAge = ageVal.value;
             } else if (dob) {
                 const dobVal = app.validators.dateOfBirth(dob);
                 if (!dobVal.valid) {
                     app.ui.toast(dobVal.message, 'error');
-                    return;
+                    return false;
                 }
                 selectedDOB = dobVal.value;
             } else {
                 app.ui.toast('Please provide either age or date of birth', 'error');
-                return;
+                return false;
             }
 
             // Gender (if provided)
@@ -591,21 +661,21 @@ const app = {
                 const genderVal = app.validators.gender(gender);
                 if (!genderVal.valid) {
                     app.ui.toast(genderVal.message, 'error');
-                    return;
+                    return false;
                 }
             }
 
             // City
             if (!city) {
                 app.ui.toast('City is required', 'error');
-                return;
+                return false;
             }
 
             // Governorate
             const govVal = app.validators.governorate(gov);
             if (!govVal.valid) {
                 app.ui.toast(govVal.message, 'error');
-                return;
+                return false;
             }
 
             // ════════════════════════════════════════════════════════════════
@@ -621,17 +691,17 @@ const app = {
 
                 if (!specialization) {
                     app.ui.toast('Specialization is required for doctors', 'error');
-                    return;
+                    return false;
                 }
 
                 if (!licenseFile) {
                     app.ui.toast('Medical license ID is required', 'error');
-                    return;
+                    return false;
                 }
 
                 if (!certificateFiles || certificateFiles.length === 0) {
                     app.ui.toast('At least one medical certificate is required', 'error');
-                    return;
+                    return false;
                 }
 
                 // Validate file sizes and types
@@ -640,22 +710,22 @@ const app = {
 
                 if (licenseFile.size > maxSize) {
                     app.ui.toast('License file size must be less than 5MB', 'error');
-                    return;
+                    return false;
                 }
 
                 if (!allowedTypes.includes(licenseFile.type)) {
                     app.ui.toast('License file must be PDF or image (JPG/PNG)', 'error');
-                    return;
+                    return false;
                 }
 
                 for (let cert of certificateFiles) {
                     if (cert.size > maxSize) {
                         app.ui.toast(`Certificate "${cert.name}" exceeds 5MB limit`, 'error');
-                        return;
+                        return false;
                     }
                     if (!allowedTypes.includes(cert.type)) {
                         app.ui.toast(`Certificate "${cert.name}" must be PDF or image`, 'error');
-                        return;
+                        return false;
                     }
                 }
 
@@ -731,7 +801,7 @@ const app = {
                         city: city,
                         governorate: govVal.value
                     };
-                    const res = await app.api('/register', 'POST', body);
+                    const res = await app.api('/api/register', 'POST', body);
                     app.ui.toast("✓ Registration successful! Please login with your credentials.", "success");
                     document.getElementById('registerForm')?.reset();
                     
@@ -756,18 +826,23 @@ const app = {
 
             if (!loginId || !password) {
                 app.ui.toast('Please enter your login ID and password', 'error');
-                return;
+                return false;
             }
 
             try {
-                const res = await app.api('/login', 'POST', { loginId, password });
+                const res = await app.api('/api/login', 'POST', { loginId, password });
                 if (res && res.token && res.user) {
                     localStorage.setItem('mr_token', res.token);
+                    localStorage.setItem('token', res.token);
+                    try {
+                        const role = res.user.activeRole || (res.user.roles && res.user.roles[0]) || res.user.role || 'patient';
+                        localStorage.setItem('userRole', role);
+                    } catch (e) { /* ignore */ }
                     app.user = res.user;
                     
                     // Fetch full user profile to get verification status
                     try {
-                        const fullProfile = await app.api('/users/profile', 'GET');
+                        const fullProfile = await app.api('/api/users/profile', 'GET');
                         app.user = { ...app.user, ...fullProfile };
                     } catch (e) {
                         // If profile fetch fails, continue with basic user data
@@ -779,7 +854,11 @@ const app = {
                 } else {
                     app.ui.toast('Login failed: invalid response', 'error');
                 }
-            } catch (err) {}
+            } catch (err) {
+                const errorMsg = err.message || 'Login failed';
+                console.error('Login error details:', err);
+                app.ui.toast(errorMsg, 'error');
+            }
         },
 
         // TEMPORARY DEVELOPMENT TEST BUTTON – REMOVE BEFORE PRODUCTION
@@ -795,12 +874,17 @@ const app = {
             // earlier bypass scripts.
             const creds = { loginId: '01099999999', password: 'password123' };
             try {
-                const res = await app.api('/login', 'POST', creds);
+                const res = await app.api('/api/login', 'POST', creds);
                 if (res && res.token && res.user) {
                     localStorage.setItem('mr_token', res.token);
+                    localStorage.setItem('token', res.token);
+                    try {
+                        const role = res.user.activeRole || (res.user.roles && res.user.roles[0]) || res.user.role || 'patient';
+                        localStorage.setItem('userRole', role);
+                    } catch (e) { /* ignore */ }
                     app.user = res.user;
                     try {
-                        const fullProfile = await app.api('/users/profile', 'GET');
+                        const fullProfile = await app.api('/api/users/profile', 'GET');
                         app.user = { ...app.user, ...fullProfile };
                     } catch (e) {
                         console.warn('Could not fetch full profile');
@@ -815,13 +899,60 @@ const app = {
             }
         },
 
+        isTokenExpired(token) {
+            if (!token) return true;
+            try {
+                const parts = token.split('.');
+                if (parts.length !== 3) return true;
+                const payload = JSON.parse(atob(parts[1]));
+                if (!payload.exp) return false; // no exp claim — assume valid
+                const now = Math.floor(Date.now() / 1000);
+                return payload.exp <= now;
+            } catch (err) {
+                return true;
+            }
+        },
 
         logout() {
             localStorage.removeItem('mr_token');
+            localStorage.removeItem('token');
+            localStorage.removeItem('userRole');
             if (app.ui.notifInterval) clearInterval(app.ui.notifInterval);
             app.user = null;
             app.ui.showLogin();
         },
+    },
+
+    // -----------------------------
+    // Specializations Module
+    // -----------------------------
+    specializations: {},
+
+    // initialize specializations safely (called after DOMContentLoaded)
+    // fills the #regSpecialization select if present
+    initSpecializations: async function () {
+        try {
+            const resp = await app.api('/api/specializations', 'GET');
+            const specs = Array.isArray(resp) ? resp : (resp && Array.isArray(resp.data) ? resp.data : null);
+            const sel = document.getElementById('regSpecialization');
+            if (!sel) {
+                console.warn('Specialization select not found in DOM');
+                return;
+            }
+            sel.innerHTML = '<option value="">Select specialization...</option>';
+            if (!specs) {
+                console.error('Invalid specializations response:', resp);
+                return;
+            }
+            specs.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.code || s.name;
+                opt.textContent = s.name + (s.nameAr ? ` (${s.nameAr})` : '');
+                sel.appendChild(opt);
+            });
+        } catch (err) {
+            console.error('Could not load specializations:', err);
+        }
     },
 
     ui: {
@@ -919,7 +1050,7 @@ const app = {
 
         async switchRole(role) {
             try {
-                const res = await app.api('/users/profile', 'PUT', { activeRole: role });
+                const res = await app.api('/api/users/profile', 'PUT', { activeRole: role });
                 app.user = res;
                 app.ui.toast(`${app.translations[app.lang].switch_role || 'Switched to'} ${app.translations[app.lang][`role_${role}`] || role}`, "info");
                 app.ui.showApp();
@@ -936,18 +1067,18 @@ const app = {
             
             if (app.user.activeRole === 'patient') {
                 navHtml += `<a href="#" class="nav-item ${active === 'dashboard' ? 'active' : ''}" onclick="app.ui.showView('dashboard')"><i class="fa-solid fa-house"></i> <span data-i18n="nav_dashboard">${app.translations[app.lang].nav_dashboard}</span></a>`;
+                navHtml += `<a href="#" class="nav-item ${active === 'messages' ? 'active' : ''}" onclick="app.ui.showView('messages')"><i class="fa-solid fa-comments"></i> <span data-i18n="nav_messages">${app.translations[app.lang].nav_messages}</span></a>`;
                 navHtml += `<a href="#" class="nav-item ${active === 'pharmacy' ? 'active' : ''}" onclick="app.ui.showView('pharmacy')"><i class="fa-solid fa-capsules"></i> <span data-i18n="nav_pharmacy">Pharmacies</span></a>`;
                 navHtml += `<a href="#" class="nav-item ${active === 'appointments' ? 'active' : ''}" onclick="app.ui.showView('appointments')"><i class="fa-solid fa-calendar-check"></i> <span data-i18n="nav_appointments">${app.translations[app.lang].nav_appointments}</span></a>`;
             } else if (app.user.activeRole === 'doctor') {
-                // if the doctor is not yet approved we limit the nav to the
-                // pending notice and profile/settings.  approved doctors see full
-                // menu.
                 const isApproved = app.user.verificationStatus === 'approved';
                 if (isApproved) {
+                    // approved doctors see patient list, messages and appointments
                     navHtml += `<a href="#" class="nav-item ${active === 'dashboard' ? 'active' : ''}" onclick="app.ui.showView('dashboard')"><i class="fa-solid fa-hospital-user"></i> <span data-i18n="nav_patients">${app.translations[app.lang].nav_patients}</span></a>`;
-                    navHtml += `<a href="#" class="nav-item ${active === 'messages' ? 'active' : ''}" onclick="app.ui.showView('messages')"><i class="fa-solid fa-message"></i> <span data-i18n="nav_messages">${app.translations[app.lang].nav_messages}</span></a>`;
+                    navHtml += `<a href="#" class="nav-item ${active === 'messages' ? 'active' : ''}" onclick="app.ui.showView('messages')"><i class="fa-solid fa-comments"></i> <span data-i18n="nav_messages">${app.translations[app.lang].nav_messages}</span></a>`;
                     navHtml += `<a href="#" class="nav-item ${active === 'appointments' ? 'active' : ''}" onclick="app.ui.showView('appointments')"><i class="fa-solid fa-calendar-check"></i> <span data-i18n="nav_appointments">${app.translations[app.lang].nav_appointments}</span></a>`;
                 } else {
+                    // pending doctors only see a waiting notice
                     navHtml += `<a href="#" class="nav-item ${active === 'doctorPending' ? 'active' : ''}" onclick="app.ui.showView('doctorPending')"><i class="fa-solid fa-hourglass-clock"></i> <span>Verification Pending</span></a>`;
                 }
             } else if (app.user.activeRole === 'admin') {
@@ -1146,11 +1277,11 @@ const app = {
                         <div class="card-header"><h2>Account Settings</h2></div>
                         <div class="form-group">
                             <label>Full Name</label>
-                            <input type="text" value="${p.name}" disabled>
+                            <input type="text" id="profName" value="${p.name}">
                         </div>
                         <div class="form-group">
                             <label>Phone Number</label>
-                            <input type="text" value="${p.phone}" disabled>
+                            <input type="text" id="profPhone" value="${p.phone}">
                         </div>
                         <div class="form-group">
                             <label>Email Address</label>
@@ -1231,7 +1362,7 @@ const app = {
         async renderAppointments() {
             try {
                 const isDoc = app.user.activeRole === 'doctor';
-                const apts = await app.api('/clinical/appointments');
+                const apts = await app.api('/api/clinical/appointments');
                 
                 const html = `
                     <div class="content-header">
@@ -1264,7 +1395,7 @@ const app = {
 
         async showAptBooking() {
             try {
-                const docs = await app.api('/doctors');
+                const docs = await app.api('/api/doctors');
                 const html = `
                     <div class="card" style="max-width:500px; margin: 40px auto;">
                         <div class="card-header"><h2>${app.translations[app.lang].book_apt}</h2></div>
@@ -1367,8 +1498,8 @@ const app = {
 
         async renderAdminPanel() {
             try {
-                const apps = await app.api('/admin/applications');
-                const users = await app.api('/admin/users');
+                const apps = await app.api('/api/admin/applications');
+                const users = await app.api('/api/admin/users');
                 const html = `
                     <h1 class="page-title" data-i18n="admin_panel">Admin Panel</h1>
                     <div class="card mb-4">
@@ -1547,11 +1678,22 @@ const app = {
             const p = app.currentPatient;
             if (!p) return this.renderDoctorDashboard();
 
+            const patientName = p.name || '';
             const html = `
                 <div class="content-header" style="flex-wrap: wrap; gap: 15px;">
-                    <h1 class="page-title m-0">Patient: ${p.name}</h1>
+                    <h1 class="page-title m-0">Patient: ${patientName}</h1>
+                </div>
+                <div class="patient-info" style="margin-bottom:10px;">
+                    <div id="patientName"></div>
+                    <div id="patientPhone"></div>
                 </div>
                 <div class="dashboard-widgets">
+                    <!-- compact message box for doctor -->
+                    <div class="card stagger-0" style="min-width:250px;">
+                        <div class="card-header"><h3>Send Message</h3></div>
+                        <div class="form-group" style="margin:8px 0;"><input type="text" id="doctorMsgInput" placeholder="Type a message..." style="width:100%;padding:6px;"></div>
+                        <button class="btn secondary-btn full-width" onclick="app.doctor.sendMsgToPatient()">Send Message</button>
+                    </div>
                     <div class="card stagger-1">
                         <div class="card-header"><h2>Write Prescription</h2></div>
                         <div class="form-group"><label>Medications</label><input type="text" id="rxMeds"></div>
@@ -1565,10 +1707,6 @@ const app = {
                         </div>
                         <button class="btn primary-btn full-width mt-3" onclick="app.doctor.prescribe()">Send Prescription</button>
                     </div>
-                    <div class="card stagger-2">
-                        <div class="card-header"><h2>Prescriptions History</h2></div>
-                        <div id="doctorPrescriptionsList"></div>
-                    </div>
                     <div class="card stagger-3">
                         <div class="card-header"><h2>Shared Documents</h2></div>
                         <div id="doctorDocumentsList"></div>
@@ -1577,8 +1715,22 @@ const app = {
             `;
             const mainView = document.getElementById('mainView');
             if (mainView) mainView.innerHTML = html;
-            app.doctor.loadPrescriptions();
+            // history removed; no need to load prescriptions here
             app.i18n.apply();
+            if (app.renderPatientData) app.renderPatientData(p);
+        },
+
+        renderChatView() {
+            // Render the messaging/chat interface using app.messaging.renderView()
+            if (app.messaging && typeof app.messaging.renderView === 'function') {
+                app.messaging.renderView();
+            } else {
+                console.error('Messaging module not available');
+                const mainView = document.getElementById('mainView');
+                if (mainView) {
+                    mainView.innerHTML = `<div class="card mt-5"><p>Messages interface is not available.</p></div>`;
+                }
+            }
         }
     },
 
@@ -1609,7 +1761,7 @@ const app = {
                     const isDoc = app.user.activeRole === 'doctor';
                     const patientId = isDoc ? app.currentPatient.id : app.user.id;
                     
-                    await app.api('/clinical/prescribe', 'POST', { 
+                    await app.api('/api/clinical/prescribe', 'POST', { 
                         patientId, 
                         medications: isDoc ? "Doctor Camera Capture" : "Patient Capture", 
                         notes: isDoc ? "Captured by doctor during session" : "Captured via system camera", 
@@ -1617,14 +1769,53 @@ const app = {
                     });
                     app.ui.toast("Captured and Uploaded", "success");
                     app.ui.hideCamera();
-                    if (isDoc) app.doctor.loadPrescriptions();
-                    else app.patient.loadPrescriptions();
+                    // history view removed; no need to reload prescriptions here
+                    if (!isDoc) app.patient.loadPrescriptions();
                 } catch (err) {}
             }, 'image/jpeg');
         }
     },
 
     patient: {
+        async searchDoctor() {
+            const name = document.getElementById('doctorSearchInput')?.value.trim();
+            if (!name) return app.ui.toast('Please enter a doctor name', 'error');
+            try {
+                const doctors = await app.api(`/api/users/doctors?q=${encodeURIComponent(name)}`);
+                if (!Array.isArray(doctors) || doctors.length === 0) {
+                    app.ui.toast('No doctors found', 'error');
+                    return;
+                }
+                // render simple result list under the search bar
+                let container = document.getElementById('doctorSearchResults');
+                if (!container) {
+                    container = document.createElement('div');
+                    container.id = 'doctorSearchResults';
+                    container.style.marginTop = '8px';
+                    document.getElementById('patientDoctorSelect')?.appendChild(container);
+                }
+                container.innerHTML = doctors.map(d => `
+                    <div class="card mb-2" style="padding:8px; display:flex; justify-content:space-between; align-items:center;">
+                        <span>${d.name} (${d.specialization || 'N/A'})</span>
+                        <button class="btn secondary-btn" onclick="app.messaging.openConversation('${d.id}')">Message</button>
+                    </div>
+                `).join('');
+            } catch (err) {
+                console.error('Doctor search failed', err);
+                app.ui.toast('Search error', 'error');
+            }
+        },
+        async deletePrescriptionFile(prescriptionId) {
+            if (!prescriptionId) return app.ui.toast('Invalid prescription', 'error');
+            if (!confirm('Delete attached PDF? This cannot be undone.')) return;
+            try {
+                await app.api(`/clinical/prescriptions/${prescriptionId}/file`, 'DELETE');
+                app.ui.toast('Prescription file removed successfully.', 'success');
+                this.loadPrescriptions();
+            } catch (err) {
+                app.ui.toast(err.message || 'Failed to delete file', 'error');
+            }
+        },
         async applyForDoctor() {
             const fileInput = document.getElementById('doctorLicenseFile');
             if (!fileInput || !fileInput.files.length) return app.ui.toast("Select a file", "error");
@@ -1632,7 +1823,7 @@ const app = {
             formData.append('file', fileInput.files[0]);
             try {
                 const data = await app.apiUpload('/users/upload', formData);
-                await app.api('/apply', 'POST', { docUrl: data.url });
+                await app.api('/api/apply', 'POST', { docUrl: data.url });
                 app.ui.toast("Application submitted", "success");
                 app.ui.renderPatientDashboard();
             } catch (err) {}
@@ -1643,7 +1834,7 @@ const app = {
             const time = document.getElementById('aptTime').value;
             if (!date || !time) return app.ui.toast("Select date and time", "error");
             try {
-                await app.api('/clinical/appointments', 'POST', { doctorId: docId, date, time });
+                await app.api('/api/clinical/appointments', 'POST', { doctorId: docId, date, time });
                 app.ui.toast("Booked!", "success");
                 app.ui.renderAppointments();
             } catch (err) {}
@@ -1700,18 +1891,47 @@ const app = {
             if (!fileInput || !fileInput.files.length) return app.ui.toast("Select a file to upload", "error");
             const formData = new FormData();
             formData.append('file', fileInput.files[0]);
+            // TODO: delete button next to PDF is added in loadPrescriptions when patient role is active.
+
+            // Ensure token exists and is not expired before sending
+            const token = localStorage.getItem('mr_token') || localStorage.getItem('token');
+            if (!token) {
+                app.ui.toast('Not authenticated. Please login.', 'error');
+                return app.auth.logout();
+            }
+            if (app.auth.isTokenExpired(token)) {
+                localStorage.removeItem('mr_token');
+                localStorage.removeItem('token');
+                app.ui.toast('Session expired. Please login again.', 'error');
+                return app.auth.logout();
+            }
+
             try {
-                const rx = await app.apiUpload('/clinical/patient/upload', formData);
+                // Use explicit fetch to guarantee Authorization header is present
+                const resp = await fetch((window.location.protocol === 'file:' ? 'http://127.0.0.1:3000' : '') + '/api/clinical/patient/upload', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: formData
+                });
+
+                if (!resp.ok) {
+                    const data = await resp.json().catch(() => ({}));
+                    throw new Error(data.msg || data.message || `Upload failed (${resp.status})`);
+                }
+
+                const rx = await resp.json();
                 app.ui.toast("File uploaded", "success");
                 this.loadPrescriptions();
                 fileInput.value = '';
             } catch (err) {
-                app.ui.toast("Upload failed", "error");
+                app.ui.toast(err.message || "Upload failed", "error");
             }
         },
         async loadPrescriptions() {
             try {
-                const prescriptions = await app.api('/clinical/prescriptions');
+                const prescriptions = await app.api('/api/clinical/prescriptions');
                 const container = document.getElementById('patientPrescriptionsList');
                 if (!container) return;
                 if (prescriptions.length === 0) {
@@ -1728,10 +1948,16 @@ const app = {
                             <p>${rx.notes || 'No notes'}</p>
                             ${rx.fileUrl ? `<a href="${rx.fileUrl}" target="_blank" class="link">View Attachment</a>` : ''}
                         </div>
-                        <div class="card-footer">
+                        <div class="card-footer" style="display:flex; gap:8px; flex-wrap:wrap;">
                             <button onclick="app.patient.exportToPDF('${rx.id}')" class="btn primary-btn btn-sm">
                                 <i class="fa-solid fa-download"></i> Export
                             </button>
+                            <button onclick="app.patient.deletePrescription('${rx.id}')" class="btn danger-btn btn-sm">
+                                <i class="fa-solid fa-trash"></i> Delete
+                            </button>
+                            ${rx.fileUrl ? `<button onclick="app.patient.deletePrescriptionFile('${rx.id}')" class="btn secondary-btn btn-sm">
+                                <i class="fa-solid fa-file-circle-xmark"></i> Remove File
+                            </button>` : ''}
                         </div>
                     </div>
                 `).join('');
@@ -1745,11 +1971,33 @@ const app = {
         async searchPatient() {
             const id = document.getElementById('patientSearchInput').value;
             try {
-                const p = await app.api(`/profile?id=${id}`);
-                app.currentPatient = p;
+                const response = await app.api(`/api/clinical/patient/lookup?nationalId=${encodeURIComponent(id)}`, 'GET', null);
+                if (!response || response.error) {
+                    app.ui.toast("Patient not found", "error");
+                    return;
+                }
+                // support both shapes: { patient: {...} } or direct object
+                const patient = response.patient ? response.patient : response;
+                app.currentPatient = patient;
+                // history may still be present if endpoint returns it
+                if (response.history) app.currentPatient.history = response.history;
                 app.ui.renderDoctorWorkspace();
+                if (app.renderPatientData) app.renderPatientData(app.currentPatient);
             } catch (err) {
                 app.ui.toast("Patient not found", "error");
+                console.error("Search Error:", err);
+            }
+        },
+        async sendMsgToPatient() {
+            const txt = document.getElementById('doctorMsgInput')?.value;
+            if (!txt) return app.ui.toast('Enter a message', 'error');
+            if (!app.currentPatient || !app.currentPatient.id) return app.ui.toast('No patient selected', 'error');
+            try {
+                await app.api('/api/messages', 'POST', { receiverId: app.currentPatient.id, content: txt });
+                document.getElementById('doctorMsgInput').value = '';
+                app.ui.toast('Message sent', 'success');
+            } catch (err) {
+                app.ui.toast('Send failed', 'error');
             }
         },
         async prescribe() {
@@ -1765,60 +2013,100 @@ const app = {
             const notes = document.getElementById('rxNotes').value;
             const fileInput = document.getElementById('doctorRxFile');
             if (!meds) return app.ui.toast("Meds cannot be empty", "error");
-            let fileUrl = null;
-            if (fileInput?.files.length) {
-                const formData = new FormData();
-                formData.append('file', fileInput.files[0]);
-                try {
-                    const data = await app.apiUpload('/users/upload', formData);
-                    fileUrl = data.url;
-                } catch (err) { return; }
-            }
+
             try {
-                const resp = await app.api('/clinical/prescribe', 'POST', { patientId: app.currentPatient.id, medications: meds, notes, fileUrl });
+                let resp;
+                if (fileInput?.files.length) {
+                    // send multipart with file directly
+                    const formData = new FormData();
+                    formData.append('file', fileInput.files[0]);
+                    formData.append('patientId', app.currentPatient.id);
+                    formData.append('medications', meds);
+                    if (notes) formData.append('notes', notes);
+                    resp = await app.apiUpload('/clinical/prescribe', formData);
+                } else {
+                    resp = await app.api('/api/clinical/prescribe', 'POST', { patientId: app.currentPatient.id, medications: meds, notes });
+                }
                 app.ui.toast(resp.msg || "Prescription sent successfully.", "success");
-                this.loadPrescriptions();
+                // history removed; no longer refreshing doctor history
             } catch (err) {
-                // if server returns authorization errors, show message
                 if (err.message) app.ui.toast(err.message, 'error');
             }
         },
 
+
         async loadPrescriptions() {
             if (!app.currentPatient) return;
             try {
-                const list = await app.api(`/clinical/prescriptions?patientId=${app.currentPatient.id}`);
-                // categorize entries
-                const prescriptions = list.filter(r => r.category === 'prescription');
-                const documents = list.filter(r => r.category !== 'prescription');
+                // Use the lookup endpoint which provides combined history
+                const data = await app.api(`/api/clinical/patient/lookup?nationalId=${encodeURIComponent(app.currentPatient.id)}`, 'GET', null);
+                const visits = data.history || [];
 
                 const presContainer = document.getElementById('doctorPrescriptionsList');
-                const docContainer = document.getElementById('doctorDocumentsList');
-
                 if (presContainer) {
-                    presContainer.innerHTML = prescriptions.length === 0
-                        ? `<p>${app.translations[app.lang].no_history || 'No history.'}</p>`
-                        : prescriptions.reverse().map(rx => `
-                            <div class="card mb-2">
-                                <strong>${rx.medications || '(no medications)'}</strong><br><small>${new Date(rx.date).toLocaleDateString()}</small>
-                                ${rx.fileUrl ? `<br><a href="${rx.fileUrl}" target="_blank">Attachment</a>` : ''}
+                    if (!visits.length) {
+                        presContainer.innerHTML = `<p>${app.translations[app.lang].no_history || 'No history.'}</p>`;
+                    } else {
+                        presContainer.innerHTML = `
+                            <div class="table-container" style="overflow-x:auto;">
+                                <table style="width:100%; border-collapse: collapse; min-width:600px;">
+                                    <thead>
+                                        <tr style="text-align:left; border-bottom: 2px solid var(--border);">
+                                            <th style="padding:12px;">Patient Name</th>
+                                            <th style="padding:12px;">Visit Date</th>
+                                            <th style="padding:12px;">Diagnosis</th>
+                                            <th style="padding:12px;">Prescription / File</th>
+                                            <th style="padding:12px; text-align:right;">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${visits.map(v => `
+                                            <tr style="border-bottom:1px solid var(--border);">
+                                                <td style="padding:12px;">${v.patientName}</td>
+                                                <td style="padding:12px;">${new Date(v.date).toLocaleString()}</td>
+                                                <td style="padding:12px;">${v.diagnosis || '-'}</td>
+                                                <td style="padding:12px;">${v.medications ? v.medications : (v.fileUrl ? `<a href=\"${v.fileUrl}\" target=\"_blank\">Attachment</a>` : '-')}</td>
+                                                <td style="padding:12px; text-align:right;">
+                                                    <button class="btn secondary-btn small mr-2" onclick="event.stopPropagation(); app.ui.showView('messages'); app.messaging.openConversation('${app.currentPatient.id}')">Message Patient</button>
+                                                    ${v.prescriptionId ? `<button class=\"btn danger-btn small mr-2\" onclick=\"app.doctor.deletePrescription('${v.prescriptionId}')\">Delete Prescription</button>` : ''}
+                                                    ${v.fileUrl ? `<button class=\"btn danger-btn small\" onclick=\"app.doctor.deletePrescriptionFile('${v.prescriptionId}')\">Delete PDF</button>` : ''}
+                                                </td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
                             </div>
-                        `).join('');
+                        `;
+                    }
                 }
+            } catch (err) {
+                console.error('Failed to load patient history', err);
+            }
+        },
 
-                if (docContainer) {
-                    docContainer.innerHTML = documents.length === 0
-                        ? `<p>${app.translations[app.lang].no_history || 'No history.'}</p>`
-                        : documents.reverse().map(rx => `
-                            <div class="card mb-2">
-                                <small>${new Date(rx.date).toLocaleDateString()}</small>
-                                ${rx.notes ? `<p>${rx.notes}</p>` : ''}
-                                ${rx.fileUrl ? `<a href="${rx.fileUrl}" target="_blank">View Document</a>` : ''}
-                            </div>
-                        `).join('');
-                }
-            } catch (err) {}
-        }
+        async deletePrescription(prescriptionId) {
+            if (!prescriptionId) return app.ui.toast('Invalid prescription', 'error');
+            if (!confirm('Are you sure you want to delete this item?')) return;
+            try {
+                await app.api(`/clinical/prescriptions/${prescriptionId}`, 'DELETE');
+                app.ui.toast('Prescription deleted successfully.', 'success');
+                this.loadPrescriptions();
+            } catch (err) {
+                app.ui.toast(err.message || 'Failed to delete', 'error');
+            }
+        },
+
+        async deletePrescriptionFile(prescriptionId) {
+            if (!prescriptionId) return app.ui.toast('Invalid prescription', 'error');
+            if (!confirm('Delete attached PDF? This cannot be undone.')) return;
+            try {
+                await app.api(`/clinical/prescriptions/${prescriptionId}/file`, 'DELETE');
+                app.ui.toast('Prescription file removed successfully.', 'success');
+                this.loadPrescriptions();
+            } catch (err) {
+                app.ui.toast(err.message || 'Failed to delete file', 'error');
+            }
+        },
     },
 
     // Simple messaging UI / client helper to ensure conversations are fetched
@@ -1844,6 +2132,16 @@ const app = {
                     </div>
                 </div>
             `;
+            // enable sending by pressing Enter key
+            const input = document.getElementById('msgText');
+            if (input) {
+                input.addEventListener('keypress', function(event) {
+                    if (event.key === 'Enter') {
+                        event.preventDefault();
+                        app.messaging.send();
+                    }
+                });
+            }
         },
         async openConversation(partnerId) {
             if (!partnerId) return app.ui.toast('Enter partner id', 'error');
@@ -1872,13 +2170,15 @@ const app = {
             const txt = document.getElementById('msgText')?.value;
             if (!txt || !this.currentPartner) return app.ui.toast('Open a conversation and enter a message', 'error');
             try {
-                await app.api('/messages', 'POST', { receiverId: this.currentPartner, content: txt });
+                await app.api('/api/messages', 'POST', { receiverId: this.currentPartner, content: txt });
                 document.getElementById('msgText').value = '';
                 await this.loadConversation();
+                app.ui.toast('Message delivered', 'success');
             } catch (err) {
                 app.ui.toast('Send failed', 'error');
             }
         },
+
         startAutoRefresh() {
             this.stopAutoRefresh();
             this.refreshHandle = setInterval(() => this.loadConversation(), 4000);
@@ -1899,14 +2199,17 @@ const app = {
                 let pharmacies;
                 try {
                     const pos = await app.geo.getPosition();
-                    pharmacies = await app.api(`/users/pharmacies/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}`, 'GET');
+                    pharmacies = await app.api(`/api/users/pharmacies/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}`, 'GET');
                 } catch (_) {
-                    pharmacies = await app.api('/users/pharmacies', 'GET');
+                    pharmacies = await app.api('/api/users/pharmacies', 'GET');
                 }
 
                 let html = `
                     <div class="search-box" style="padding: 20px;">
                         <h3>${app.translations[app.lang].nav_pharmacy || 'Pharmacies'}</h3>
+                        <div style="margin-bottom:10px;">
+                            ${app.useRealPharmacy ? '' : `<button class="btn secondary-btn small" onclick="app.pharmacy.toggleReal(true)">${app.translations[app.lang].activate_pharmacy || 'Activate real pharmacy service'}</button>`}
+                        </div>
                         <input type="text" id="pharmacySearch" placeholder="${app.translations[app.lang].search_pharmacy_placeholder || 'Search pharmacies...'}" style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid var(--border); border-radius: 6px;">
                         <button onclick="app.pharmacy.searchPharmacies()" class="btn primary-btn" style="width: 100%;">
                             <i class="fa-solid fa-search"></i> ${app.translations[app.lang].search_btn || 'Search'}
@@ -1923,15 +2226,29 @@ const app = {
                 }
             }
         },
+        // Called from UI: Use device geolocation to populate nearby pharmacies
+        async useLocation() {
+            try {
+                const pos = await app.geo.getPosition();
+                const pharmacies = await app.api(`/users/pharmacies/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}`, 'GET');
+                this.displayPharmacies(pharmacies);
+            } catch (err) {
+                app.ui.toast('Unable to retrieve location or nearby pharmacies', 'error');
+            }
+        },
+        // Alias used by index.html button (keeps backward compatibility)
+        async search() {
+            return this.searchPharmacies();
+        },
         async searchPharmacies() {
             const query = document.getElementById('pharmacySearch')?.value || '';
             try {
                 let pharmacies;
                 try {
                     const pos = await app.geo.getPosition();
-                    pharmacies = await app.api(`/users/pharmacies/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}`, 'GET');
+                    pharmacies = await app.api(`/api/users/pharmacies/nearby?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}`, 'GET');
                 } catch (err) {
-                    pharmacies = await app.api('/users/pharmacies', 'GET');
+                    pharmacies = await app.api('/api/users/pharmacies', 'GET');
                 }
 
                 const filtered = pharmacies.filter(p => 
@@ -2024,7 +2341,7 @@ const app = {
     family: {
         async loadFamilyMembers() {
             try {
-                const members = await app.api('/family', 'GET');
+                const members = await app.api('/api/family', 'GET');
                 const container = document.getElementById('familyMembersContainer');
                 if (!container) return;
 
@@ -2209,7 +2526,87 @@ const app = {
     }
 };
 
-document.addEventListener('DOMContentLoaded', () => {
-    app.i18n.init();
-    app.auth.init();
+// Ensure specializations init runs after DOM is ready
+document.addEventListener("DOMContentLoaded", function () {
+    try {
+        if (window.app && typeof window.app.initSpecializations === 'function') {
+            window.app.initSpecializations();
+        }
+    } catch (e) { /* ignore */ }
 });
+
+document.addEventListener('DOMContentLoaded', () => {
+    // init routines
+    window.app.i18n.init();
+    window.app.auth.init();
+
+    // sanity check for the common `app is not defined` error
+    if (typeof window.app !== 'undefined') {
+        console.log('App is defined at DOMContentLoaded');
+    } else {
+        console.error('App is undefined at DOMContentLoaded');
+    }
+});
+
+// ===== SYSTEM DIAGNOSTIC TOOL =====
+
+window.app.debug = {};
+
+window.app.debug.run = async function () {
+
+    console.log("========== SYSTEM DIAGNOSTIC START ==========");
+
+    // 1️⃣ Check global app initialization
+    console.log("App object exists:", typeof window.app !== "undefined");
+
+    // 2️⃣ Check authentication object
+    console.log("Auth initialized:", typeof window.app.auth !== "undefined");
+
+    // 3️⃣ Check token existence
+    const token = localStorage.getItem("token");
+    console.log("Token exists:", !!token);
+
+    // 4️⃣ Check user role
+    const role = localStorage.getItem("userRole");
+    console.log("User role:", role);
+
+    // 5️⃣ Test API connectivity
+    try {
+        const response = await fetch("/api/specializations", {
+            method: "GET",
+            headers: token ? { "Authorization": "Bearer " + token } : {}
+        });
+
+        console.log("API status code:", response.status);
+    } catch (error) {
+        console.error("API connection failed:", error);
+    }
+
+    // 6️⃣ Check all buttons
+    const buttons = document.querySelectorAll("button");
+    console.log("Total buttons detected:", buttons.length);
+
+    buttons.forEach((btn, index) => {
+        console.log("Button", index + 1, "Text:", btn.innerText);
+    });
+
+    console.log("========== SYSTEM DIAGNOSTIC END ==========");
+};
+
+// fallback helper to avoid 'not a function' errors
+if (!window.app) window.app = {};
+window.app.patient = window.app.patient || {};
+if (typeof window.app.patient.deletePrescription !== 'function') {
+    window.app.patient.deletePrescription = async function(id) {
+        try {
+            await app.api(`/clinical/prescriptions/${id}`, 'DELETE');
+            app.ui.toast('Prescription deleted successfully.', 'success');
+            if (app.patient && typeof app.patient.loadPrescriptions === 'function') {
+                app.patient.loadPrescriptions();
+            }
+        } catch (err) {
+            console.error('Fallback deletePrescription error:', err);
+            app.ui.toast('Delete failed', 'error');
+        }
+    };
+}

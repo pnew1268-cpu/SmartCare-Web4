@@ -126,6 +126,13 @@ app.get('/api', (req, res) => {
 // Ping endpoint to verify server status
 app.get('/api/ping', (req, res) => res.json({ status: 'ok', time: new Date() }));
 
+// config endpoint for frontend to pull in runtime settings (e.g. external redirect)
+app.get('/config.js', (req, res) => {
+    res.setHeader('Content-Type', 'application/javascript');
+    const url = process.env.EXTERNAL_REGISTRATION_URL || '';
+    res.send(`window.EXTERNAL_REGISTRATION_URL = ${JSON.stringify(url)};`);
+});
+
 // ────────────────────────────────────────────────
 // SPA fallback & API 404
 // ────────────────────────────────────────────────
@@ -293,6 +300,9 @@ sequelize.authenticate()
         }
         // allow automatic approval of all doctors when testing; set AUTO_APPROVE_DOCTORS=true
         if (process.env.AUTO_APPROVE_DOCTORS === 'true') {
+            if (process.env.NODE_ENV === 'production') {
+                console.warn('⚠️ AUTO_APPROVE_DOCTORS is enabled in production! This should be disabled before deployment.');
+            }
             const User = require('./models/User');
             const { Op } = require('sequelize');
             const [updated] = await User.update({ verificationStatus: 'approved' }, {

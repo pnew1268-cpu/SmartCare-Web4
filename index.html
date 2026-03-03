@@ -28,7 +28,7 @@
                 </button>
             </div>
             
-            <form id="loginForm" class="auth-form" onsubmit="app.auth.login(event)">
+            <form id="loginForm" class="auth-form" onsubmit="return app.auth.login(event)">
                 <h2 data-i18n="login_title">Welcome Back</h2>
                 <div class="form-group">
                     <label data-i18n="login_id_label">Phone Number or National ID</label>
@@ -45,7 +45,7 @@
                 </div>
             </form>
 
-            <form id="registerForm" class="auth-form hidden" onsubmit="app.auth.register(event)">
+            <form id="registerForm" class="auth-form hidden" onsubmit="return app.auth.register(event)">
                 <h2 data-i18n="register_title">Create Account</h2>
                 
                 <!-- ROLE SELECTION -->
@@ -201,6 +201,7 @@
                         <i class="fa-solid fa-user-doctor"></i>
                         <input type="text" id="doctorSearchInput" data-i18n-prop="placeholder" data-i18n="search_doc_placeholder" placeholder="Find a Doctor...">
                         <button class="btn primary-btn" onclick="app.patient.searchDoctor()" data-i18n="search_btn">Search</button>
+                        <!-- results will be injected here -->
                     </div>
                 </div>
 
@@ -298,6 +299,7 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- authCore.js and authManager.js have been merged into script.js to avoid duplicate/global auth logic -->
     <script src="script.js"></script>
 </body>
 </html>

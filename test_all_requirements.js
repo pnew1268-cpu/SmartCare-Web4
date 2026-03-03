@@ -98,6 +98,27 @@
             Array.isArray(docNotifs) && docNotifs.some(n => n.message && n.message.toLowerCase().includes('message')),
             'No message-related notification'
         );
+        // now doctor replies back and patient should get notification
+        const sendMsgBack = await fetch('http://localhost:3000/api/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${docToken}`
+            },
+            body: JSON.stringify({
+                receiverId: patientData.user.id,
+                content: 'Reply from doctor'
+            })
+        });
+        test('Doctor can send reply message', sendMsgBack.ok, sendMsgBack.ok ? '' : 'Doctor message failed');
+        const patientNotifsResp = await fetch('http://localhost:3000/api/notifications', {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${patientToken}` }
+        });
+        const patientNotifs = await patientNotifsResp.json();
+        test('Patient receives notification on doctor message', patientNotifsResp.ok && Array.isArray(patientNotifs), 'Patient notifications fetch failed');
+        const hasMsgNotif = Array.isArray(patientNotifs) && patientNotifs.some(n => n.type === 'message' && n.meta && n.meta.senderId === docData.user.id);
+        test('Patient notification list contains doctor message alert', hasMsgNotif, 'No doctor message notification');
 
         // ============ REQUIREMENT 3: Arabic Language Support (RTL) ============
         console.log('\n[3] Arabic Language Support (RTL)');
@@ -180,7 +201,21 @@
         test('Config indicates dev mode', configData.devMode === true);
         test('Doctor account exists and usable', docData.token ? true : false);
 
-        // ============ REQUIREMENT 9: Patient File Upload (PDF) ==========
+        // ============ REQUIREMENT 9: Patient Lookup Data Format ============
+        console.log('\n[9] Patient Lookup Data Format');
+        console.log('─'.repeat(50));
+        const lookupResp = await fetch(`http://localhost:3000/api/clinical/patient/lookup?nationalId=${patientData.user.id}`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${docToken}` }
+        });
+        const lookupData = await lookupResp.json();
+        const patientInfo = lookupData.patient ? lookupData.patient : lookupData;
+        test('Lookup endpoint returns JSON object', lookupResp.ok && typeof lookupData === 'object');
+        test('Lookup result contains name and phone',
+             patientInfo && patientInfo.name && patientInfo.phone,
+             'Missing patient name/phone in response');
+
+        // ============ REQUIREMENT 10: Patient File Upload (PDF) ==========
         console.log('\n[9] Patient Medical File Upload and Record Creation');
         console.log('─'.repeat(50));
         // create an appointment to test notification as well
@@ -207,6 +242,9 @@
         const docNotifs2 = await docNotifsAfter.json();
         test('Doctor receives appointment notification', docNotifsAfter.ok && Array.isArray(docNotifs2), 'Doctor notifs fetch failed');
         test('Notification list contains appointment alert', Array.isArray(docNotifs2) && docNotifs2.some(n => n.message && n.message.toLowerCase().includes('appointment')), 'No appointment notification for doctor');
+        // new check: appointment notif should include meta with patientId for chat button
+        const chatMetaOk = Array.isArray(docNotifs2) && docNotifs2.some(n => n.meta && n.meta.patientId === patientData.user.id);
+        test('Appointment notification contains patientId meta for chat', chatMetaOk, 'Meta patientId missing or incorrect');
 
         const form = new FormData();
         form.append('file', new Blob(['dummy'], { type: 'application/pdf' }), 'test.pdf');
@@ -231,6 +269,24 @@
         });
         const docRxData = await docRxList.json();
         test('Doctor can see patient document', Array.isArray(docRxData) && docRxData.some(rx => rx.category === 'document' && rx.fileUrl === uploadData.fileUrl));
+        // ===== deletion tests for patient =====
+        const rxId = uploadData.id;
+        const deleteFileResp = await fetch(`http://localhost:3000/api/clinical/prescriptions/${rxId}/file`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${patientToken}` }
+        });
+        test('Patient can delete prescription file', deleteFileResp.ok, deleteFileResp.ok ? '' : 'File delete API failed');
+        const deleteResp = await fetch(`http://localhost:3000/api/clinical/prescriptions/${rxId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${patientToken}` }
+        });
+        test('Patient can delete prescription record', deleteResp.ok, deleteResp.ok ? '' : 'Record delete API failed');
+        const afterDelList = await fetch('http://localhost:3000/api/clinical/prescriptions', {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${patientToken}` }
+        });
+        const afterDelData = await afterDelList.json();
+        test('Deleted prescription removed from list', Array.isArray(afterDelData) && !afterDelData.some(rx => rx.id === rxId));
 
         // ============ SUMMARY ============
         console.log(`
